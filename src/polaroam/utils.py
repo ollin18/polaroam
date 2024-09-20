@@ -387,17 +387,24 @@ def get_stationary_events(input_df, r_C, min_size, min_staying_time, max_staying
         (pl.col('event_size') >= min_size) & (pl.col('total_time') >= min_staying_time)
     )
 
-    # Join coords with event_stats to filter valid event_ids
-    coords = coords.join(
+
+    coords = coords.filter(pl.col("event_id") != -1).join(
         event_stats.select("event_id"),
         on="event_id",
-        how="left"
+        how="inner"
     )
 
     # Now replace null event_ids with -1
     coords = coords.with_columns(
         pl.col("event_id").fill_null(-1)
     )
+
+    coords = coords.with_columns([
+        pl.when(pl.col('stationary'))
+        .then(pl.col('event_change').cum_sum())
+        .otherwise(-1)
+        .alias('event_id')
+    ])
 
     coords = coords.with_columns(
         pl.concat_list(["latitude", "longitude"]).list.to_array(2).alias("stat_coords")
