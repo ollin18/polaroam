@@ -233,6 +233,27 @@ class Stopdetect(BaseStopModel):
                                                 , schema = output_schema
                                             )
                                         )
+        filtered_df = self._stat_labels.filter((pl.col("stop_events").list.len() > 1) & (pl.col("stop_locations") == -1))
+        #  max_stop_location = self._stat_labels.select(pl.col("stop_locations").max()).collect().item()
+        #  filtered_df_with_new_locations = filtered_df.with_columns(
+        #      (pl.lit(max_stop_location) + pl.arange(1, filtered_df.height + 1)).alias("new_stop_locations")
+        #  )
+        filtered_df_with_new_locations = filtered_df.with_columns(
+            (pl.col("stop_locations").max() + pl.arange(1, pl.len() + 1)).alias("new_stop_locations")
+        )
+
+
+        self._stat_labels = stat_labels.join(
+            filtered_df_with_new_locations.select(["uid", "stop_events", "new_stop_locations"]),  # Select relevant columns
+            on=["uid", "stop_events"],  # Join on these columns to ensure proper update
+            how="left"  # Keep all rows, but update the filtered ones
+        ).with_columns(
+            # Update stop_locations with new_stop_locations where applicable
+            pl.when(pl.col("new_stop_locations").is_not_null())
+            .then(pl.col("new_stop_locations"))
+            .otherwise(pl.col("stop_locations"))
+            .alias("stop_locations")
+        ).drop("new_stop_locations")
 
         stop_labels = self._stat_labels.explode(["inverse_indices","stop_events","start_timestamp","end_timestamp"]).sort("inverse_indices")
 
