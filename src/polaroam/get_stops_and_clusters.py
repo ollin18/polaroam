@@ -62,7 +62,7 @@ for date_str in unique_dates:
     pl.Config.set_streaming_chunk_size(10000)
 
     #  ds.write(medians.collect(streaming=True))
-    base_path = os.path.join(data_dir,f"error_stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","all_users_stops")
+    base_path = os.path.join(data_dir,f"new_stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","all_users_stops")
     os.makedirs(base_path, exist_ok=True)
     output_file = os.path.join(base_path, f"{date_str}.parquet")
     medians.collect(streaming=True).write_parquet(output_file, use_pyarrow=True)
@@ -75,6 +75,7 @@ for date_str in unique_dates:
 df = pl.scan_parquet(os.path.join(base_path,"*.parquet"))
 columns_to_read = ["uid", "stop_events", "latitude", "longitude", "start_timestamp", "end_timestamp"]
 df = df.select(columns_to_read)
+df.collect_schema()
 
 model = models.Stopdetect(
     r1=20,  # Max distance to consider points as stationary
@@ -93,11 +94,16 @@ model._median_coords = df
 stop_locations = model.compute_dbscan()
 
 # Prepare output file path
-#  output_file = os.path.join(data_dir,f"stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","whole_period_clusters.parquet")
-output_file = os.path.join(base_path,"whole_period_clusters.parquet")
+output_file = os.path.join(data_dir,f"new_stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","whole_period_clusters.parquet")
+#  output_file = os.path.join(base_path,"whole_period_clusters.parquet")
 # Save the processed stop locations
 pl.Config.set_streaming_chunk_size(10000)
 stop_locations.collect(streaming=True).write_parquet(output_file, use_pyarrow=True)
+
+
+#  ds = HiveDataset(os.path.join(base_path,"whole_period_clusters"), partition_columns=["date_trunc", "uid"])
+#  pl.Config.set_streaming_chunk_size(10000)
+#  ds.write(hw_df.collect(streaming=True))
 
 end = time.time()
 print(f"Processed the clustering in {end - start} seconds")
@@ -116,22 +122,23 @@ hw_model = models.HWEstimate(
     num_threads = 30,
     min_spacial_resolution=0,
     start_hour_day=7,
-    end_hour_day=21,
+    end_hour_day=20,
     start_working_hour=8,
     end_working_hour=18,
     min_periods_over_window_home=0.08,
     span_period_home=0.08,
-    min_periods_over_window_work=0.05,
-    span_period_work=0.05,
+    min_periods_over_window_work=0.08,
+    span_period_work=0.08,
     total_days=31,
     convert_tz=False,
     tz="America/Mexico_City"  # Or another timezone if different from default
 )
 
 data_dir = os.path.join("/","data","Berkeley","MX","data_quadrant")
-base_path = os.path.join(data_dir,f"error_stops_r1{hw_model._r1}_ms{hw_model._min_staying_time}_mt{hw_model._max_time_between}")
+base_path = os.path.join(data_dir,f"new_stops_r1{hw_model._r1}_ms{hw_model._min_staying_time}_mt{hw_model._max_time_between}")
 input_file = os.path.join(base_path,"whole_period_clusters.parquet")
 stop_locations = pl.scan_parquet(input_file)
+stop_locations.collect_schema()
 
 hw_df = hw_model.prepare_labeling(stop_locations)
 hw_df = hw_model.detect_home()

@@ -68,7 +68,7 @@ for date_str in unique_dates:
     pl.Config.set_streaming_chunk_size(10000)
 
     #  ds.write(medians.collect(streaming=True))
-    base_path = os.path.join(data_dir,f"stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","all_users_stops")
+    base_path = os.path.join(data_dir,f"new_stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","all_users_stops")
     os.makedirs(base_path, exist_ok=True)
     output_file = os.path.join(base_path, f"{date_str}.parquet")
     medians.collect(streaming=True).write_parquet(output_file, use_pyarrow=True)
@@ -77,8 +77,8 @@ for date_str in unique_dates:
     print(f"Processed {date_str} in {end - start} seconds")
 
 
-#  df = pl.scan_parquet(os.path.join(data_dir,f"stops_r1{model.r1}_ms{model.min_staying_time}_mt{md.max_time_between}","all_users_stops",**,"*.parquet"))
-df = pl.scan_parquet(os.path.join(base_path,"*.parquet"))
+df = pl.scan_parquet(os.path.join(data_dir,f"new_stops_r1{model.r1}_ms{model.min_staying_time}_mt{md.max_time_between}","all_users_stops",**,"*.parquet"))
+#  df = pl.scan_parquet(os.path.join(base_path,"*.parquet"))
 columns_to_read = ["uid", "stop_events", "latitude", "longitude", "start_timestamp", "end_timestamp"]
 df = df.select(columns_to_read)
 
@@ -91,7 +91,7 @@ model = models.Stopdetect(
     distance_metric="haversine",  # Distance metric, 'haversine' for geo-coordinates
     verbose=False,  # Set to True for more detailed output during processing
     num_threads = 30,
-    min_spacial_resolution=0.01
+    min_spacial_resolution=0
 )
 
 start = time.time()
