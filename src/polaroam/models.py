@@ -243,7 +243,7 @@ class Stopdetect(BaseStopModel):
         )
 
 
-        self._stat_labels = stat_labels.join(
+        self._stat_labels = self._stat_labels.join(
             filtered_df_with_new_locations.select(["uid", "stop_events", "new_stop_locations"]),  # Select relevant columns
             on=["uid", "stop_events"],  # Join on these columns to ensure proper update
             how="left"  # Keep all rows, but update the filtered ones
