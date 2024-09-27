@@ -77,12 +77,13 @@ for date_str in unique_dates:
     print(f"Processed {date_str} in {end - start} seconds")
 
 
-df = pl.scan_parquet(os.path.join(data_dir,f"new_stops_r1{model.r1}_ms{model.min_staying_time}_mt{md.max_time_between}","all_users_stops",**,"*.parquet"))
+df = pl.scan_parquet(os.path.join(data_dir,f"new_stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","all_users_stops","**","*.parquet"))
 #  df = pl.scan_parquet(os.path.join(base_path,"*.parquet"))
 columns_to_read = ["uid", "stop_events", "latitude", "longitude", "start_timestamp", "end_timestamp"]
 df = df.select(columns_to_read)
+df.collect_schema()
 
-model = models.Stopdetect(
+mdadodel = models.Stopdetect(
     r1=20,  # Max distance to consider points as stationary
     r2=20,  # Max distance to consider stationary points as connected
     min_staying_time=300,  # Minimum time to consider a location as a stop (same unit as time in data)
