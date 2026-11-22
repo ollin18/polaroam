@@ -46,7 +46,7 @@ for date_str in unique_dates:
     # Initialize your Infostop model
 
     model = models.Stopdetect(
-        r1=20,  # Max distance to consider points as stationary
+        r1=15,  # Max distance to consider points as stationary
         r2=20,  # Max distance to consider stationary points as connected
         min_staying_time=300,  # Minimum time to consider a location as a stop (same unit as time in data)
         max_time_between=3600,  # Max time between points to consider them in the same stop (same unit as time in data)
@@ -123,22 +123,28 @@ hw_model = models.HWEstimate(
     num_threads = 30,
     min_spacial_resolution=0,
     start_hour_day=7,
-    end_hour_day=21,
+    end_hour_day=20,
     start_working_hour=8,
-    end_working_hour=18,
-    min_periods_over_window_home=0.08,
-    span_period_home=0.08,
-    min_periods_over_window_work=0.05,
-    span_period_work=0.05,
-    total_days=31,
+    end_working_hour=19,
+    min_periods_over_window_home=0.10,
+    span_period_home=0.10,
+    min_periods_over_window_work=0.10,
+    span_period_work=0.07,
+    total_days=73,
     convert_tz=False,
     tz="America/Sao_Paulo"  # Or another timezone if different from default
 )
 
 data_dir = os.path.join("/","data","Berkeley","BR","data_rio")
-base_path = os.path.join(data_dir,f"stops_r1{hw_model._r1}_ms{hw_model._min_staying_time}_mt{hw_model._max_time_between}")
+base_path = os.path.join(data_dir,f"new_stops_r1{hw_model._r1}_ms{hw_model._min_staying_time}_mt{hw_model._max_time_between}")
 input_file = os.path.join(base_path,"whole_period_clusters.parquet")
 stop_locations = pl.scan_parquet(input_file)
+stop_locations.collect_schema()
+
+#  ds = HiveDataset(os.path.join(base_path,"stops_clusters"), partition_columns=["uid"])
+#  pl.Config.set_streaming_chunk_size(10000)
+#  ds.write(stop_locations.collect(streaming=True))
+
 
 hw_df = hw_model.prepare_labeling(stop_locations)
 hw_df = hw_model.detect_home()

@@ -1,0 +1,48 @@
+/* PolaRoam theme: polar blue on warm off-white, same tokens as the figures */
+:root {
+  --md-primary-fg-color: #1c5cab;
+  --md-primary-fg-color--light: #3987e5;
+  --md-primary-fg-color--dark: #104281;
+  --md-accent-fg-color: #2a78d6;
+  --pr-surface: #fcfcfb;
+  --pr-ink-2: #52514e;
+  --pr-hairline: #e1e0d9;
+}
+[data-md-color-scheme="default"] { --md-default-bg-color: #fcfcfb; }
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #104281;
+  --md-accent-fg-color: #86b6ef;
+  --md-default-bg-color: #1a1a19;
+  --md-typeset-a-color: #86b6ef;
+  --pr-surface: #1a1a19;
+  --pr-ink-2: #c3c2b7;
+  --pr-hairline: #2c2c2a;
+}
+.md-header__button.md-logo img { height: 1.9rem; border-radius: 6px; background: #fff; padding: 1px; }
+
+/* hero */
+.pr-hero { display: grid; grid-template-columns: 1.25fr 1fr; gap: 2rem; align-items: center; margin: 0.5rem 0 1.5rem; }
+.pr-hero h1 { font-size: 2.6rem; font-weight: 800; line-height: 1.1; margin: 0 0 0.6rem; letter-spacing: -0.02em; }
+.pr-hero p.pr-lead { font-size: 1.05rem; color: var(--pr-ink-2); margin: 0 0 1.2rem; }
+.pr-hero img.pr-logo { max-width: 260px; justify-self: center; border-radius: 16px; }
+.pr-hero .md-button { margin: 0 0.4rem 0.4rem 0; }
+@media (max-width: 760px) { .pr-hero { grid-template-columns: 1fr; } .pr-hero img.pr-logo { max-width: 160px; } }
+
+/* stat strip */
+.pr-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.8rem; margin: 1rem 0 1.6rem; }
+.pr-stat { border: 1px solid var(--pr-hairline); border-radius: 10px; padding: 0.7rem 0.9rem; }
+.pr-stat b { display: block; font-size: 1.5rem; line-height: 1.2; color: var(--md-primary-fg-color--light); }
+.pr-stat span { font-size: 0.72rem; color: var(--pr-ink-2); }
+@media (max-width: 760px) { .pr-stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* figures */
+.md-typeset figure img, .md-typeset p > img { border-radius: 8px; }
+.md-typeset figure figcaption { color: var(--pr-ink-2); font-size: 0.75rem; max-width: 46rem; margin: 0.4rem auto 0; }
+.md-typeset .grid.cards > ul > li { border-radius: 10px; }
+.md-typeset table:not([class]) { font-size: 0.74rem; }
+.md-typeset .mermaid { text-align: center; }
+
+/* headings in full ink, code in tables never broken mid-name */
+.md-typeset h1, .pr-hero h1 { color: var(--md-default-fg-color); font-weight: 700; }
+.pr-hero h1 { font-weight: 800; }
+.md-typeset table:not([class]) code { white-space: nowrap; }

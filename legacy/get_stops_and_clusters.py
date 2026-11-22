@@ -79,7 +79,7 @@ df.collect_schema()
 
 model = models.Stopdetect(
     r1=20,  # Max distance to consider points as stationary
-    r2=20,  # Max distance to consider stationary points as connected
+    r2=10,  # Max distance to consider stationary points as connected
     min_staying_time=300,  # Minimum time to consider a location as a stop (same unit as time in data)
     max_time_between=3600,  # Max time between points to consider them in the same stop (same unit as time in data)
     min_size=2,  # Minimum number of points to consider a stop
@@ -92,9 +92,11 @@ model = models.Stopdetect(
 start = time.time()
 model._median_coords = df
 stop_locations = model.compute_dbscan()
+#  stop_locations.collect_schema()
+#  stop_locations.fetch(5)
 
 # Prepare output file path
-output_file = os.path.join(data_dir,f"new_stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","whole_period_clusters.parquet")
+output_file = os.path.join(data_dir,f"new_stops_r1{model._r1}_ms{model._min_staying_time}_mt{model._max_time_between}","whole_period_clusters_new.parquet")
 #  output_file = os.path.join(base_path,"whole_period_clusters.parquet")
 # Save the processed stop locations
 pl.Config.set_streaming_chunk_size(10000)
@@ -151,7 +153,7 @@ hw_df.collect_schema()
 
 start = time.time()
 
-ds = HiveDataset(os.path.join(base_path,"stops_hw"), partition_columns=["date_trunc"])
+ds = HiveDataset(os.path.join(base_path,"stops_hw_test"), partition_columns=["date_trunc"])
 
 pl.Config.set_streaming_chunk_size(10000)
 ds.write(hw_df.collect(streaming=True))
@@ -161,7 +163,7 @@ print(end - start)
 
 
 
-us1 = pl.read_parquet(os.path.join(base_path, "stops_hw", "**", "*.parquet"))
+us1 = pl.read_parquet(os.path.join(base_path, "less_restrictive_stops_hw", "**", "*.parquet"))
 us1["uid"].unique().len()
 us1.filter(pl.col("location_type") == "H")["uid"].unique().len()
 us1.filter(pl.col("location_type") == "W")["uid"].unique().len()
@@ -171,7 +173,7 @@ us1.collect_schema()
 only_hw = us1.select("uid", "location_type", "cluster_latitude", "cluster_longitude")
 only_hw = only_hw.filter(pl.col("location_type") != "O").unique(subset=["uid","location_type"])
 
-path: pathlib.Path = os.path.join(base_path,"home_work_locations_by_counts.csv")
+path: pathlib.Path = os.path.join(base_path,"less_restrictive_home_work_locations_by_counts.csv")
 only_hw.write_csv(path)
 
 
@@ -188,5 +190,5 @@ wide_df = only_hw.pivot(
     pl.col("cluster_longitude_W").alias("w_lon")
 )
 
-path: pathlib.Path = os.path.join(base_path,"hw_arcs_by_counts.csv")
+path: pathlib.Path = os.path.join(base_path,"less_restrictive_hw_arcs_by_counts.csv")
 wide_df.write_csv(path)

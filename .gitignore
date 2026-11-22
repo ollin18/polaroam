@@ -111,3 +111,7 @@ ENV/
 # Files
 *.parquet
 *.csv
+examples/output/
+
+# docs build
+site/
