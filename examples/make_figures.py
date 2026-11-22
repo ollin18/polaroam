@@ -86,6 +86,7 @@ def fig_stop_density(hw, t, out):
         basemap(ax, t)
         hb = ax.hexbin(x, y, gridsize=55, extent=(x0, x1, y0, y1), cmap=cmap, norm=LogNorm(1, 3000),
                        mincnt=1, linewidths=0, alpha=0.92, zorder=2)
+        ax.set_aspect("equal", adjustable="box")
         ax.set_title(name, color=t["ink"]), ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
         for s in ax.spines.values():
             s.set_visible(False)
@@ -113,6 +114,7 @@ def fig_trajectories(tr, hw, t, out, tz="America/Sao_Paulo"):
     ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
     basemap(ax, t)
     ax.add_collection(LineCollection(segs, colors=t["series"][0], linewidths=0.7, alpha=t["line_alpha"] * 3, zorder=2))
+    ax.set_aspect("equal", adjustable="box")
     ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
     for s in ax.spines.values():
         s.set_visible(False)

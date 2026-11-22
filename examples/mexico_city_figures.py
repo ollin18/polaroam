@@ -213,6 +213,7 @@ def draw_hex(ax, cells, values, cmap, norm, t, ext):
     cells, values = clip_cells(cells, values)
     x0, x1, y0, y1 = ext
     ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
+    ax.set_aspect("equal", adjustable="box")   # true proportions (polygons do not imply an aspect)
     basemap(ax, t)
     pc = PolyCollection(hexes(cells), array=np.asarray(values, float), cmap=cmap, norm=norm,
                         edgecolors="none", alpha=0.9, zorder=2)
@@ -248,8 +249,8 @@ def fig_h3(loc, t, path, k=5):
     H, W = b8["homes"].sum(), b8["workers"].sum()
     bal = np.log2((b8["workers"].to_numpy() / W) / (b8["homes"].to_numpy() / H))
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 6.2))
-    fig.subplots_adjust(left=0.005, right=0.995, wspace=0.05, top=0.83, bottom=0.12)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 8.0))
+    fig.subplots_adjust(left=0.005, right=0.995, wspace=0.05, top=0.87, bottom=0.10)
     ext = extent()
     q = lambda s: float(np.percentile(s.to_numpy(), 99))
     panels = [
@@ -269,7 +270,7 @@ def fig_h3(loc, t, path, k=5):
             count_ticks(cb, norm.vmin, norm.vmax)
     fig.suptitle("Where Mexico City lives and works", x=0.008, y=0.985, ha="left", fontsize=13, fontweight="bold",
                  color=t["ink"])
-    fig.text(0.008, 0.92, f"Cells with fewer than {k} devices are hidden. Homes / work places on coordinate sinks "
+    fig.text(0.008, 0.935, f"Cells with fewer than {k} devices are hidden. Homes / work places on coordinate sinks "
              f"(exact points shared by 50+ devices: {nh:,} homes, {nw:,} work places) are excluded.",
              fontsize=9, color=t["ink2"])
     fig.text(0.008, 0.008, ATTRIBUTION, fontsize=7, color=t["muted"])
