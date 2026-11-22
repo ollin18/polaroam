@@ -77,6 +77,17 @@ def hist2d(lat, lon, bins):
 
 
 MODES = ["walk", "bike", "motorized"]
+
+
+def hot_cmap():
+    """Multi-hue sequential scale for counts on a dark basemap: inferno without its near-black
+    start, so the lowest counts stay visible (dark purple -> red -> orange -> pale yellow)."""
+    import matplotlib
+    from matplotlib.colors import ListedColormap
+
+    return ListedColormap(matplotlib.colormaps["inferno"](np.linspace(0.18, 1.0, 256)), name="hot")
+
+
 MODE_COLS = ["speed_p85_kmh", "speed_max_kmh", "duration", "n_pings", "ping_gap_median_s", "length_m"]
 
 
@@ -123,7 +134,7 @@ def load(out):
 
 
 def fig_stays(stays, home, work, n, t, path):
-    cmap = LinearSegmentedColormap.from_list("seq", t["seq"])
+    cmap = hot_cmap()
     fig, axes = plt.subplots(1, 3, figsize=(15, 5.6))
     fig.subplots_adjust(left=0.005, right=0.95, wspace=0.03, top=0.86, bottom=0.05)
     x0, x1, y0, y1 = extent()
@@ -133,8 +144,9 @@ def fig_stays(stays, home, work, n, t, path):
         ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
         basemap(ax, t)
         m = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
-        im = ax.imshow(m, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, alpha=0.88, zorder=2,
-                       norm=LogNorm(vmin=1, vmax=max(h.max(), 2)), interpolation="nearest")
+        vmax = max(float(np.percentile(h[h > 0], 99.5)), 2)
+        im = ax.imshow(m, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, alpha=0.95, zorder=2,
+                       norm=LogNorm(vmin=1, vmax=vmax), interpolation="nearest")
         outline(ax, t)
         ax.set_title(title, color=t["ink"]), ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
         for s in ax.spines.values():
@@ -228,12 +240,13 @@ def clean_locations(loc, min_devices=50):
 
 
 def fig_h3(loc, t, path, k=5):
-    seq = LinearSegmentedColormap.from_list("seq", t["seq"])
+    seq = hot_cmap()
     div = LinearSegmentedColormap.from_list(
-        "div", ["#1c5cab", "#86b6ef", "#f0efec" if t is THEMES["light"] else "#383835", "#ec835a", "#c93b3a"])
+        "div", ["#3987e5", "#86b6ef", "#f0efec" if t is THEMES["light"] else "#4a4a46", "#ec835a", "#e34948"])
     loc, nh, nw = clean_locations(loc)
     h10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("homes")
-    w9 = pr.home_work_h3(loc, 9, min_count=k, geometry=False).drop_nulls("workers")
+    w10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("workers")
+    n_h, n_w = loc["home_latitude"].is_not_null().sum(), loc["work_latitude"].is_not_null().sum()
     b8 = pr.home_work_h3(loc, 8, min_count=k, geometry=False).drop_nulls(["homes", "workers"])
     H, W = b8["homes"].sum(), b8["workers"].sum()
     bal = np.log2((b8["workers"].to_numpy() / W) / (b8["homes"].to_numpy() / H))
@@ -243,8 +256,10 @@ def fig_h3(loc, t, path, k=5):
     ext = extent()
     q = lambda s: float(np.percentile(s.to_numpy(), 99))
     panels = [
-        (h10, h10["homes"], seq, LogNorm(k, q(h10["homes"])), f"Homes, H3 res 10 (~76 m): {h10['homes'].sum():,}"),
-        (w9, w9["workers"], seq, LogNorm(k, q(w9["workers"])), f"Work places, H3 res 9 (~200 m): {w9['workers'].sum():,}"),
+        (h10, h10["homes"], seq, LogNorm(k, q(h10["homes"])),
+         f"Homes, H3 res 10 (~76 m): {h10['homes'].sum():,} ({h10['homes'].sum() / n_h:.0%} shown)"),
+        (w10, w10["workers"], seq, LogNorm(k, q(w10["workers"])),
+         f"Work places, H3 res 10 (~76 m): {w10['workers'].sum():,} ({w10['workers'].sum() / n_w:.0%} shown)"),
         (b8, np.clip(bal, -3, 3), div, Normalize(-3, 3), "Jobs vs residents, H3 res 8 (~530 m)"),
     ]
     for ax, (cells, vals, cmap, norm, title) in zip(axes, panels):
@@ -321,17 +336,15 @@ def main():
             fig_mode_features(tr, tz, t, f"{a.out}/cdmx_modes_{mode}.png")
         return
     loc = pl.read_parquet(glob.glob(f"{a.output_dir}/locations/shard=*.parquet"))
-    for mode, t in THEMES.items():
-        style(t)
-        fig_h3(loc, t, f"{a.out}/cdmx_h3_{mode}.png")
+    # one dark rendering (hot colors = most) used in both site themes
+    style(THEMES["dark"])
+    fig_h3(loc, THEMES["dark"], f"{a.out}/cdmx_h3.png")
     if a.only_h3:
         return
     stays, home, work, flow, by_mode, n = load(a.output_dir)
     print(n)
-    for mode, t in THEMES.items():
-        style(t)
-        fig_stays(stays, home, work, n, t, f"{a.out}/cdmx_stays_{mode}.png")
-        print("figures:", mode)
+    style(THEMES["dark"])
+    fig_stays(stays, home, work, n, THEMES["dark"], f"{a.out}/cdmx_stays.png")
     # trajectory maps: one dark rendering (white = most traveled), used in both site themes
     style(THEMES["dark"])
     fig_flows(flow, n, THEMES["dark"], f"{a.out}/cdmx_flows.png")

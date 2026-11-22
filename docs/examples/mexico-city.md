@@ -56,8 +56,7 @@ pipe.run("/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet")
 
 Counts per ~150 m cell, log scale:
 
-![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_light.png#only-light)
-![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_dark.png#only-dark)
+![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays.png)
 
 ## Homes and work places on H3
 
@@ -68,13 +67,15 @@ devices are hidden.
 cells = pipe.locations_h3(resolution=10)          # or pr.home_work_h3(locations, 10)
 ```
 
-![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_light.png#only-light)
-![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_dark.png#only-dark)
+![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3.png)
 
-Homes cover the residential city at block level (res 10, ~76 m). Work places concentrate in
-the center and along the main corridors. The jobs-vs-residents panel shows the job-rich center
-against the residential periphery. With one month of data (7 / 4 day thresholds), about one
-device in six with a home also has a work place.
+Homes and work places are both at block level (res 10, ~76 m), and each panel title says
+what share of devices is shown. Homes cover the residential city (90% shown). Work places are
+far fewer: at res 10 only 40% fall in cells with at least 5 workers, so the map keeps the
+densest job areas. Use res 9 (91% shown) for a fuller picture. The jobs-vs-residents panel
+stays at res 8, where both counts clear k everywhere. It shows the job-rich center against the
+residential periphery. With one month of data (7 / 4 day thresholds), about one device in six
+with a home also has a work place. Click any figure to enlarge it.
 
 ## Trajectories
 
