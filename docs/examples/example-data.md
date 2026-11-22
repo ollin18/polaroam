@@ -88,13 +88,16 @@ trips.group_by("mode_guess").agg(
 ![Speed features by mode](../assets/figures/mode_features_light.png#only-light)
 ![Speed features by mode](../assets/figures/mode_features_dark.png#only-dark)
 
-- **Cruising speed (p85)** separates the classes by construction. The thresholds (8 and
-  22 km/h) are the baseline rules; motorized trips peak around 30 km/h.
-- **Speed CV vs p85**: most trips are stop-and-go (CV ~1). Steady fast trips (low CV, high p85)
-  are a distinct minority, mostly highways and rail.
-- **Mode share by hour**: motorized trips dominate the morning and evening peaks; slow
-  movement dominates the night.
-- **Trip length by mode**: medians of 0.3 km (walk), 1.6 km (bike) and 6.3 km (motorized).
+- **Cruising speed of all trips** (top left), one series with the walk and bike thresholds
+  marked: motorized-speed trips peak around 30 km/h.
+- **How trips are labeled** (top right): every trip by cruising speed (p85) and max speed. The
+  colored boxes are the walk and bike rules, applied in order, and the numbers are the trips
+  each class received. A trip with a walking-like p85 but a fast window lands outside the walk
+  box. Both boxes also require an overall trip speed below the box's max.
+- **Mode share by local hour** (bottom left): motorized trips dominate the morning and evening
+  peaks; slow movement dominates the night.
+- **Trip length by mode** (bottom right): median dot, middle 50% bar and 10th–90th percentile
+  line. Medians are 0.3 km (walk), 1.6 km (bike) and 6.3 km (motorized).
 
 Speed over time for one trip of each class (shaded: gaps > 5 min, not used):
 

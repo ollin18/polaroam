@@ -50,6 +50,9 @@ theme:
     - content.tooltips
     - content.action.edit
 
+hooks:
+  - mkdocs_hooks/cache_bust.py
+
 extra_css:
   - stylesheets/extra.css
 
