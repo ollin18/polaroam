@@ -36,15 +36,10 @@ homes, 53.9k work places):
 | 10 | ~76 m | 90% | 40% |
 | 11 | ~29 m | 58% | 18% |
 
-![Homes, work places and jobs vs residents in Mexico City](../assets/figures/cdmx_h3_light.png#only-light)
-![Homes, work places and jobs vs residents in Mexico City](../assets/figures/cdmx_h3_dark.png#only-dark)
+![Homes and work places on H3 in Mexico City](../assets/figures/cdmx_h3_light.png#only-light)
+![Homes and work places on H3 in Mexico City](../assets/figures/cdmx_h3_dark.png#only-dark)
 
-The right panel compares jobs with residents per res-8 cell, only where both counts are at
-least 5 (ratios of tiny counts are noise). It plots
-\(\log_2\big((\text{workers}_c / W) / (\text{homes}_c / H)\big)\), where \(W\) and \(H\) are
-the city totals: red cells have more jobs than residents relative to the city, blue cells the
-opposite. A coarse resolution keeps both counts above k everywhere. At finer resolutions,
-requiring ≥ k workers would select only job-dense cells and bias the map red.
+Homes and work places at resolution 10 (~76 m) in one month of Mexico City, every cell shown.
 
 ## Data quality: coordinate sinks
 

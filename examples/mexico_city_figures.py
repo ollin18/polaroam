@@ -19,7 +19,7 @@ import numpy as np
 import polars as pl
 from make_figures import ATTRIBUTION, R_MERC, THEMES, basemap, fig_mode_features, merc, style
 from matplotlib.collections import PolyCollection
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
+from matplotlib.colors import LinearSegmentedColormap, LogNorm
 
 import polaroam as pr
 
@@ -105,26 +105,17 @@ def vertex_density(coords: pl.Series, bins: int):
 
 
 def load(out):
-    bins_pts, bins_flow = 260, 900
-    stays = np.zeros((bins_pts, bins_pts))
-    home = np.zeros_like(stays)
-    work = np.zeros_like(stays)
+    bins_flow = 900
+    stay_lon, stay_lat = [], []
     flow = np.zeros((bins_flow, bins_flow))
     by_mode = {m: np.zeros((bins_flow, bins_flow)) for m in MODES}
     n = {"stays": 0, "home": 0, "work": 0, "trajectories": 0, "vertices": 0, "devices": 0, **{m: 0 for m in MODES}}
     for f in sorted(glob.glob(f"{out}/clusters/shard=*.parquet")):
         c = pl.read_parquet(f, columns=["uid", "stop_latitude", "stop_longitude"])
-        stays += hist2d(c["stop_latitude"].to_numpy(), c["stop_longitude"].to_numpy(), bins_pts)
+        stay_lon.append(c["stop_longitude"].to_numpy())
+        stay_lat.append(c["stop_latitude"].to_numpy())
         n["stays"] += c.height
         n["devices"] += c["uid"].n_unique()
-    for f in sorted(glob.glob(f"{out}/locations/shard=*.parquet")):
-        loc = pl.read_parquet(f)
-        h = loc.drop_nulls("home_latitude")
-        w = loc.drop_nulls("work_latitude")
-        home += hist2d(h["home_latitude"].to_numpy(), h["home_longitude"].to_numpy(), bins_pts)
-        work += hist2d(w["work_latitude"].to_numpy(), w["work_longitude"].to_numpy(), bins_pts)
-        n["home"] += h.height
-        n["work"] += w.height
     for f in sorted(glob.glob(f"{out}/trajectories/**/shard=*.parquet", recursive=True)):
         tr = pr.guess_mode(pl.read_parquet(f, columns=["coordinates", "n_points", *MODE_COLS]))
         flow += vertex_density(tr["coordinates"], bins_flow)
@@ -134,34 +125,84 @@ def load(out):
             n[m] += sub_.height
         n["trajectories"] += tr.height
         n["vertices"] += int(tr["n_points"].sum())
-    return stays, home, work, flow, by_mode, n
+    return np.concatenate(stay_lon), np.concatenate(stay_lat), flow, by_mode, n
 
 
-def fig_stays(stays, home, work, n, t, path):
-    cmap = hot_cmap()
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5.6))
-    fig.subplots_adjust(left=0.005, right=0.95, wspace=0.03, top=0.86, bottom=0.05)
-    x0, x1, y0, y1 = extent()
-    panels = [(stays, f"All stays ({n['stays'] / 1e6:.1f}M)"), (home, f"Homes ({n['home']:,})"),
-              (work, f"Work places ({n['work']:,})")]
-    for ax, (h, title) in zip(axes, panels):
-        ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
-        basemap(ax, t)
-        m = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
-        vmax = max(float(np.percentile(h[h > 0], 99.5)), 2)
-        im = ax.imshow(m, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, alpha=0.95, zorder=2,
-                       norm=LogNorm(vmin=1, vmax=vmax), interpolation="nearest")
-        outline(ax, t)
-        ax.set_title(title, color=t["ink"]), ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
-        for s in ax.spines.values():
-            s.set_visible(False)
-        cb = fig.colorbar(im, ax=ax, fraction=0.04, pad=0.01, shrink=0.8)
-        cb.outline.set_visible(False)
-    fig.suptitle(f"Mexico City, December 2022: {n['devices'] / 1e6:.2f}M devices "
-                 "(count per ~150 m cell, log scale)", x=0.008, y=0.98, ha="left", fontsize=13,
-                 fontweight="bold", color=t["ink"])
-    fig.text(0.008, 0.012, ATTRIBUTION, fontsize=7, color=t["muted"])
-    fig.savefig(path, dpi=130)
+DS_BG = "#0e0e12"   # datashader panel background (as in the haystac maps)
+
+
+def ds_extent(margin=0.02):
+    """City bounds in degrees, with a margin."""
+    lo0, la0, lo1, la1 = boundary().bounds
+    mx, my = (lo1 - lo0) * margin, (la1 - la0) * margin
+    return lo0 - mx, lo1 + mx, la0 - my, la1 + my
+
+
+def ds_image(lon, lat, cmap, width=900, spread=0):
+    """datashader point density, histogram-equalised, clipped to the city boundary."""
+    import datashader as ds
+    import datashader.transfer_functions as tf
+    import pandas as pd
+
+    lon0, lon1, lat0, lat1 = ds_extent()
+    h = max(1, round(width * (lat1 - lat0) / (lon1 - lon0)))   # square pixels in degrees
+    cvs = ds.Canvas(plot_width=width, plot_height=h, x_range=(lon0, lon1), y_range=(lat0, lat1))
+    agg = cvs.points(pd.DataFrame({"lon": np.asarray(lon, float), "lat": np.asarray(lat, float)}), "lon", "lat")
+    X, Y = np.meshgrid(agg.coords["lon"].values, agg.coords["lat"].values)
+    agg = agg.where(inside(X, Y) & (agg > 0))                         # outside the city: transparent
+    img = tf.shade(agg, cmap=cmap, how="eq_hist", min_alpha=0)
+    if spread:   # grow isolated points so sparse layers stay visible (datashader's usual remedy)
+        img = tf.spread(img, px=spread, shape="circle")
+    img = tf.set_background(img, DS_BG)
+    return np.asarray(img.to_pil()), (lon0, lon1, lat0, lat1)
+
+
+def ds_panel(ax, img, ext, title, subtitle=""):
+    """A datashader map on a white page: dark panel, true proportions, city outline."""
+    ax.imshow(img, extent=ext, origin="upper", interpolation="auto",
+              aspect=1 / np.cos(np.radians((ext[2] + ext[3]) / 2)))
+    b = boundary()
+    for poly in getattr(b, "geoms", [b]):
+        lo, la = np.asarray(poly.exterior.coords).T
+        ax.plot(lo, la, color=MAP_LINE, lw=0.8)
+    ax.set_xlim(ext[0], ext[1]), ax.set_ylim(ext[2], ext[3])
+    ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
+    for s_ in ax.spines.values():
+        s_.set_visible(False)
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=8)
+    if subtitle:
+        ax.text(0.5, -0.02, subtitle, transform=ax.transAxes, ha="center", va="top", fontsize=10.5,
+                color=THEMES["light"]["ink2"])
+
+
+def inferno_list(lo=0.12):
+    import matplotlib
+
+    return [matplotlib.colors.to_hex(c) for c in matplotlib.colormaps["inferno"](np.linspace(lo, 1.0, 12))]
+
+
+def fig_ds_stays(lon, lat, n, path):
+    img, ext = ds_image(lon, lat, inferno_list(), width=1000)
+    fig, ax = plt.subplots(figsize=(9.5, 11))
+    ds_panel(ax, img, ext, f"Where people stay: {n['stays'] / 1e6:.1f}M stays, {n['devices'] / 1e6:.2f}M devices",
+             "datashader, histogram-equalised · December 2022")
+    fig.savefig(path, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+
+
+def fig_ds_home_work(loc, path):
+    loc, nh, _nw = clean_locations(loc)
+    h = loc.drop_nulls("home_latitude")
+    w = loc.drop_nulls("work_latitude")
+    fig, axes = plt.subplots(1, 2, figsize=(15, 9.5))
+    panels = [(h, "home_latitude", "home_longitude", f"Homes: {h.height:,}",
+               f"homes on coordinate sinks excluded ({nh:,})"),
+              (w, "work_latitude", "work_longitude", f"Work places: {w.height:,}",
+               "datashader, histogram-equalised")]
+    for ax, (d, la, lo, title, sub_) in zip(axes, panels):
+        img, ext = ds_image(d[lo], d[la], inferno_list(), width=700, spread=1)
+        ds_panel(ax, img, ext, title, sub_)
+    fig.savefig(path, dpi=130, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -245,17 +286,11 @@ def clean_locations(loc, min_devices=50):
 
 def fig_h3(loc, t, path, k=1):
     seq = hot_cmap()
-    div = LinearSegmentedColormap.from_list(
-        "div", ["#1c5cab", "#86b6ef", "#f0efec" if t is THEMES["light"] else "#383835", "#ec835a", "#c93b3a"])
     loc, nh, nw = clean_locations(loc)
     h10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("homes")
     w10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("workers")
-    # ratios of tiny counts are noise: compare cells with at least 5 homes and 5 workers
-    b8 = pr.home_work_h3(loc, 8, min_count=5, geometry=False).drop_nulls(["homes", "workers"])
-    H, W = b8["homes"].sum(), b8["workers"].sum()
-    bal = np.log2((b8["workers"].to_numpy() / W) / (b8["homes"].to_numpy() / H))
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 8.0))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 8.0))
     fig.subplots_adjust(left=0.005, right=0.995, wspace=0.05, top=0.87, bottom=0.10)
     ext = extent()
     q = lambda s: float(np.percentile(s.to_numpy(), 99))
@@ -263,18 +298,14 @@ def fig_h3(loc, t, path, k=1):
         (h10, h10["homes"], seq, LogNorm(k, q(h10["homes"])), f"Homes, H3 res 10 (~76 m): {h10['homes'].sum():,}"),
         (w10, w10["workers"], seq, LogNorm(k, q(w10["workers"])),
          f"Work places, H3 res 10 (~76 m): {w10['workers'].sum():,}"),
-        (b8, np.clip(bal, -3, 3), div, Normalize(-3, 3), "Jobs vs residents, H3 res 8 (~530 m)"),
     ]
     for ax, (cells, vals, cmap, norm, title) in zip(axes, panels):
         pc = draw_hex(ax, cells, vals, cmap, norm, t, ext)
         ax.set_title(title, color=t["ink"], fontsize=10.5)
         cb = fig.colorbar(pc, ax=ax, orientation="horizontal", fraction=0.04, pad=0.02, shrink=0.8)
         cb.outline.set_visible(False)
-        if cmap is div:
-            cb.set_ticks([-3, 0, 3], labels=["8x more residents", "city average", "8x more jobs"])
-        else:
-            cb.set_label("devices per cell (log)", color=t["ink2"])
-            count_ticks(cb, norm.vmin, norm.vmax)
+        cb.set_label("devices per cell (log)", color=t["ink2"])
+        count_ticks(cb, norm.vmin, norm.vmax)
     fig.suptitle("Where Mexico City lives and works", x=0.008, y=0.985, ha="left", fontsize=13, fontweight="bold",
                  color=t["ink"])
     hidden = f"Cells with fewer than {k} devices are hidden. " if k > 1 else ""
@@ -345,11 +376,12 @@ def main():
         fig_h3(loc, t, f"{a.out}/cdmx_h3_{mode}.png")
     if a.only_h3:
         return
-    stays, home, work, flow, by_mode, n = load(a.output_dir)
+    stay_lon, stay_lat, flow, by_mode, n = load(a.output_dir)
     print(n)
-    for mode, t in THEMES.items():
-        style(t)
-        fig_stays(stays, home, work, n, t, f"{a.out}/cdmx_stays_{mode}.png")
+    # datashader maps (as in the haystac project): one image for both site themes
+    style(THEMES["light"])
+    fig_ds_stays(stay_lon, stay_lat, n, f"{a.out}/cdmx_stays.png")
+    fig_ds_home_work(loc, f"{a.out}/cdmx_home_work.png")
     # trajectory maps: one image for both site themes: white page, black text, dark map panel
     style(THEMES["light"])
     fig_flows(flow, n, THEMES["light"], f"{a.out}/cdmx_flows.png")

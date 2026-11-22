@@ -52,32 +52,24 @@ pipe.run("/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet")
 | devices with a home | 339,793 | 370,200 |
 | devices with a work place | 53,885 | 58,766 |
 
-## Stays, homes and work places
+## Where people stay
 
-Counts per ~150 m cell, log scale:
+All 19.8M stays as points, rendered with [datashader](https://datashader.org) (aggregated per
+pixel, histogram-equalised colors) and clipped to the city boundary:
 
-![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_light.png#only-light)
-![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_dark.png#only-dark)
+![Where people stay in Mexico City](../assets/figures/cdmx_stays.png){ width="640" }
 
-## Homes and work places on H3
+## Homes and work places
 
-Fine-grained heat maps with [H3](../guide/spatial.md): counts of homes and work places per
-hexagon, with no identifiers, so every cell is shown (`min_count=1`).
+The home and work location of every device that has one (`pipe.locations()`), same rendering.
+Homes on coordinate sinks are excluded.
 
-```python
-cells = pipe.locations_h3(resolution=10)          # or pr.home_work_h3(locations, 10)
-```
+![Homes and work places in Mexico City](../assets/figures/cdmx_home_work.png)
 
-![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_light.png#only-light)
-![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_dark.png#only-dark)
-
-Homes and work places are both at block level (res 10, ~76 m). Homes cover the residential
-city; work places concentrate in the center and along the main corridors. The jobs-vs-residents
-panel (res 8) compares only cells with at least 5 homes and 5 work places: that is for
-statistical stability (a ratio of 2 workers to 1 home is noise), not privacy. It shows the
-job-rich center against the residential periphery. With one month of data (7 / 4 day
-thresholds), about one device in six with a home also has a work place. Click any figure to
-enlarge it.
+Homes cover the residential city; work places concentrate in the center and along the main
+corridors. With one month of data (7 / 4 day thresholds), about one device in six with a home
+also has a work place. For per-hexagon counts you can join with other data, see [Heat maps
+with H3](../guide/spatial.md). Click any figure to enlarge it.
 
 ## Trajectories
 
