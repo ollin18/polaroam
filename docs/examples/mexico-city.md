@@ -78,7 +78,8 @@ device in six with a home also has a work place.
 
 ## Trajectories
 
-Every trajectory, rasterized at ~50 m: each pixel counts the trajectories passing through it.
+Every observed position of the 13.5M trajectories (78M points: pings and stay anchors), as a
+density raster. The street network appears from movement alone.
 
 ![Trajectory density in Mexico City](../assets/figures/cdmx_flows_light.png#only-light){ width="640" }
 ![Trajectory density in Mexico City](../assets/figures/cdmx_flows_dark.png#only-dark){ width="640" }

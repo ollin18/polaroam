@@ -80,24 +80,13 @@ MODES = ["walk", "bike", "motorized"]
 MODE_COLS = ["speed_p85_kmh", "speed_max_kmh", "duration", "n_pings", "ping_gap_median_s", "length_m"]
 
 
-def rasterize_lines(coords: pl.Series, bins: int):
-    """Pixel counts of polylines: every segment is sampled about once per pixel, so a pixel
-    counts (roughly) the trajectories passing through it, not the vertices it holds."""
-    x0, x1, y0, y1 = extent()
-    step = (x1 - x0) / bins
-    df = pl.DataFrame({"c": coords}).with_row_index("t").explode("c").drop_nulls()
-    xy = np.asarray(df["c"].to_list())
-    t = df["t"].to_numpy()
-    x, y = merc(xy[:, 0], xy[:, 1])
-    same = t[1:] == t[:-1]
-    ax_, ay_, bx_, by_ = x[:-1][same], y[:-1][same], x[1:][same], y[1:][same]
-    n = np.maximum(1, np.ceil(np.hypot(bx_ - ax_, by_ - ay_) / step).astype(np.int64))
-    seg = np.repeat(np.arange(len(n)), n)
-    k = np.arange(n.sum()) - np.repeat(np.cumsum(n) - n, n)
-    f = k / n[seg]
-    px, py = ax_[seg] + f * (bx_[seg] - ax_[seg]), ay_[seg] + f * (by_[seg] - ay_[seg])
-    h, _, _ = np.histogram2d(py, px, bins=bins, range=[[y0, y1], [x0, x1]])
-    return h
+def vertex_density(coords: pl.Series, bins: int):
+    """Density of observed positions: the vertices of the trajectories (real pings and stay
+    anchors, on actual streets), not the straight chords between sparse pings."""
+    xy = np.asarray(pl.DataFrame({"c": coords}).explode("c").drop_nulls()["c"].to_list())
+    if len(xy) == 0:
+        return np.zeros((bins, bins))
+    return hist2d(xy[:, 1], xy[:, 0], bins)
 
 
 def load(out):
@@ -123,10 +112,10 @@ def load(out):
         n["work"] += w.height
     for f in sorted(glob.glob(f"{out}/trajectories/**/shard=*.parquet", recursive=True)):
         tr = pr.guess_mode(pl.read_parquet(f, columns=["coordinates", "n_points", *MODE_COLS]))
-        flow += rasterize_lines(tr["coordinates"], bins_flow)
+        flow += vertex_density(tr["coordinates"], bins_flow)
         for m in MODES:
             sub_ = tr.filter(pl.col("mode_guess") == m)
-            by_mode[m] += rasterize_lines(sub_["coordinates"], bins_flow)
+            by_mode[m] += vertex_density(sub_["coordinates"], bins_flow)
             n[m] += sub_.height
         n["trajectories"] += tr.height
         n["vertices"] += int(tr["n_points"].sum())
@@ -174,7 +163,7 @@ def fig_flows(flow, n, t, path):
     ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
     for s in ax.spines.values():
         s.set_visible(False)
-    ax.set_title(f"{n['trajectories'] / 1e6:.1f}M trajectories in one month (trajectories through each ~50 m pixel)",
+    ax.set_title(f"{n['trajectories'] / 1e6:.1f}M trajectories in one month ({n['vertices'] / 1e6:.0f}M observed positions)",
                  color=t["ink"], fontsize=11)
     fig.savefig(path, dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -278,6 +267,13 @@ def fig_h3(loc, t, path, k=5):
     plt.close(fig)
 
 
+def blend(c1, c2, f):
+    """Mix two hex colors (f = share of c2)."""
+    from matplotlib.colors import to_hex, to_rgb
+
+    return to_hex([(1 - f) * x + f * y for x, y in zip(to_rgb(c1), to_rgb(c2))])
+
+
 def fig_mode_maps(by_mode, n, t, path):
     """City-wide trajectory density for each mode_guess class, each in its own hue."""
     x0, x1, y0, y1 = extent()
@@ -285,7 +281,9 @@ def fig_mode_maps(by_mode, n, t, path):
     fig.subplots_adjust(left=0.005, right=0.995, wspace=0.02, top=0.86, bottom=0.03)
     for ax, m, color in zip(axes, MODES, t["series"]):
         h = by_mode[m]
-        cmap = LinearSegmentedColormap.from_list(m, [t["surface"], color, t["ink"] if t is THEMES["light"] else "#ffffff"])
+        # surface -> the mode's hue -> a deeper (light theme) or paler (dark theme) shade of that hue
+        top = blend(color, t["ink"] if t is THEMES["light"] else "#ffffff", 0.35)
+        cmap = LinearSegmentedColormap.from_list(m, [t["surface"], color, top])
         mm = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
         ax.set_facecolor(t["surface"])
         ax.imshow(mm, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, interpolation="antialiased",
@@ -296,7 +294,7 @@ def fig_mode_maps(by_mode, n, t, path):
         for s in ax.spines.values():
             s.set_visible(False)
         ax.set_title(f"{m}: {n[m] / 1e6:.2f}M trajectories", color=t["ink"], fontsize=12)
-    fig.suptitle("Where each mode travels (baseline mode_guess; density of trajectories, log scale)",
+    fig.suptitle("Where each mode travels (baseline mode_guess; observed positions, log scale)",
                  x=0.008, y=0.985, ha="left", fontsize=13, fontweight="bold", color=t["ink"])
     fig.savefig(path, dpi=130)
     plt.close(fig)
