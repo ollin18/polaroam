@@ -74,10 +74,8 @@ With \(W = \sum_i w_i\) over the valid windows:
     It is most useful together with p85. High p85 with high CV suggests a bus or city traffic;
     high p85 with low CV suggests a highway or metro.
 
-The figure shows the example data. Top left: cruising speed of every trip, with the
-thresholds marked. Top right: **how trips are labeled**, with every trip placed by p85 and max
-speed and the walk and bike rules drawn as boxes. Bottom: mode share by hour and trip length by
-mode (median, middle 50%, 10th–90th percentile).
+The figure shows the example data: cruising speed and speed variability by mode (top), mode
+share by hour and trip length by mode (bottom: median, middle 50%, 10th–90th percentile).
 
 ![Speed features by mode](../assets/figures/mode_features_light.png#only-light)
 ![Speed features by mode](../assets/figures/mode_features_dark.png#only-dark)

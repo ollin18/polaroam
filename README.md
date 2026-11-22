@@ -25,10 +25,7 @@ once or day by day, on CPU or CUDA, and follows the logic of the gc-lbs BigQuery
 - **3.4 GB** peak RAM processing that month **day by day**.
 - **Identical tables** whether you process all at once or day by day, on CPU or GPU.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/figures/cdmx_flows_dark.png">
-  <img alt="Density of 21M trajectories in Mexico City" src="docs/assets/figures/cdmx_flows_light.png" width="520">
-</picture>
+<img alt="Density of 13.5M trajectories in Mexico City" src="docs/assets/figures/cdmx_flows.png" width="520">
 
 ## Install
 

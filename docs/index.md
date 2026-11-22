@@ -29,8 +29,7 @@ with the same results as the gc-lbs BigQuery pipeline.</p>
 <div class="pr-stat"><b>0</b><span>per-device Python loops: everything is column-wise Polars</span></div>
 </div>
 
-![Trajectory density of Mexico City](assets/figures/cdmx_flows_light.png#only-light){ width="420" align=right }
-![Trajectory density of Mexico City](assets/figures/cdmx_flows_dark.png#only-dark){ width="420" align=right }
+![Trajectory density of Mexico City](assets/figures/cdmx_flows.png){ width="420" align=right }
 
 ## What you get
 

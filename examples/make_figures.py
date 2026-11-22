@@ -210,63 +210,34 @@ MODES = ["walk", "bike", "motorized"]
 
 
 def fig_mode_features(tr, hw, t, out):
-    """Mode figure: cruising speed of all trips, the labeling rules in the p85 x max plane,
-    mode share by hour and trip length by mode."""
+    """Speed features by mode_guess: cruising speed, variability, hour of day, trip length."""
     cl = dict(zip(MODES, t["series"]))
     d = tr.filter(pl.col("mode_guess").is_in(MODES))
     fig, axes = plt.subplots(2, 2, figsize=(12, 7.6))
 
-    ticks = ([1, 3, 10, 30, 100], ["1", "3", "10", "30", "100"])
-
-    import matplotlib.patheffects as pe
-
-    # (a) cruising speed of every classified trip, one neutral series, thresholds marked
     ax = axes[0, 0]
-    bins = np.logspace(np.log10(0.3), np.log10(150), 64)
-    x = d["speed_p85_kmh"].clip(lower_bound=0.3).to_numpy()
-    ax.hist(x, bins=bins, color=t["muted"], edgecolor=t["surface"], linewidth=0.5)
-    top = ax.get_ylim()[1]
-    first = int((x <= bins[1]).sum())
-    ax.annotate(f"≤ 0.3 km/h: {first:,}", (0.31, first), xytext=(6, -2), textcoords="offset points",
-                fontsize=8, color=t["ink2"], va="top")
-    for thr, lab, side in [(8, "walk if < 8 ", "right"), (22, " bike if < 22", "left")]:
-        ax.axvline(thr, color=t["ink2"], lw=1, ls="--")
-        ax.text(thr * (0.95 if side == "right" else 1.05), top * 0.95, lab, color=t["ink2"], fontsize=8.5,
-                ha=side, va="top", path_effects=[pe.withStroke(linewidth=3, foreground=t["surface"])])
-    ax.set_xscale("log"), ax.set_xticks([0.3, 1, 3, 10, 30, 100], ["0.3", "1", "3", "10", "30", "100"])
+    bins = np.logspace(0, np.log10(150), 50)
+    for m in MODES:
+        x = d.filter(pl.col("mode_guess") == m)["speed_p85_kmh"].to_numpy()
+        ax.hist(x, bins=bins, histtype="step", lw=2, color=cl[m], label=f"{m} ({len(x):,})")
+    for thr, lab in [(8, "8 km/h"), (22, "22 km/h")]:
+        ax.axvline(thr, color=t["muted"], lw=1, ls="--")
+        ax.text(thr * 1.05, ax.get_ylim()[1] * 0.93, lab, color=t["ink2"], fontsize=8)
+    ax.set_xscale("log"), ax.set_xticks([1, 3, 10, 30, 100], ["1", "3", "10", "30", "100"])
     ax.set_xlabel("cruising speed, p85 (km/h)"), ax.set_ylabel("trajectories")
-    ax.set_title(f"Cruising speed of {len(x):,} classified trips")
+    ax.set_title("Cruising speed separates the modes"), ax.legend(loc="upper left", fontsize=9)
 
-    # (b) how trips are labeled: density in the p85 x max plane with the decision regions
     ax = axes[0, 1]
-    c = d.filter(pl.col("speed_max_kmh") > 0)
-    p85 = c["speed_p85_kmh"].clip(lower_bound=0.5).to_numpy()
-    vmax = c["speed_max_kmh"].clip(lower_bound=0.5).to_numpy()
-    # neutral density so the colored rule boxes stand out
-    gray = LinearSegmentedColormap.from_list("gray", [t["grid"], t["muted"], t["ink2"]])
-    hb = ax.hexbin(p85, vmax, xscale="log", yscale="log", gridsize=55, cmap=gray, norm=LogNorm(), mincnt=1,
-                   linewidths=0, zorder=1)
-    halo = [pe.withStroke(linewidth=3, foreground=t["surface"])]
-    from matplotlib.patches import Rectangle
-    for m, (xr, yr) in {"walk": (8, 15), "bike": (22, 35)}.items():
-        ax.add_patch(Rectangle((0.5, 0.5), xr - 0.5, yr - 0.5, fill=False, ec=cl[m], lw=2, zorder=3))
-    counts = d["mode_guess"].value_counts()
-    n = dict(zip(counts["mode_guess"], counts["count"]))
-    for txt, xy, m in [(f"walk {n.get('walk', 0):,}", (0.58, 12.5), "walk"),
-                       (f"bike {n.get('bike', 0):,}", (9.5, 29), "bike"),
-                       (f"motorized {n.get('motorized', 0):,}", (0.58, 175), "motorized")]:
-        ax.text(*xy, txt, color=cl[m], fontsize=9.5, fontweight="bold", va="top", zorder=5, path_effects=halo)
-    lo, hi = 0.5, 260
-    ax.plot([lo, hi], [lo, hi], color=t["muted"], lw=1, ls=":", zorder=2)
-    ax.text(70, 50, "max ≥ p85", color=t["muted"], fontsize=8, rotation=38, zorder=2)
-    ax.set_xlim(lo, 200), ax.set_ylim(lo, hi)
-    ax.set_xticks(*ticks), ax.set_yticks([1, 3, 10, 30, 100], ["1", "3", "10", "30", "100"]), ax.grid(False)
-    ax.set_xlabel("cruising speed, p85 (km/h)"), ax.set_ylabel("max window speed (km/h)")
-    ax.set_title("How trips are labeled (boxes: walk and bike rules)")
+    c = tr.filter(pl.col("speed_p85_kmh").is_not_null() & pl.col("speed_cv").is_not_null()
+                  & (pl.col("speed_p85_kmh") > 0.5))
+    cmap = LinearSegmentedColormap.from_list("seq", t["seq"])
+    hb = ax.hexbin(c["speed_p85_kmh"], c["speed_cv"].clip(upper_bound=2.5), xscale="log", gridsize=45, cmap=cmap,
+                   norm=LogNorm(), mincnt=1, linewidths=0)
+    ax.set_xticks([1, 3, 10, 30, 100], ["1", "3", "10", "30", "100"]), ax.grid(False)
+    ax.set_xlabel("cruising speed, p85 (km/h)"), ax.set_ylabel("speed CV (std / mean)")
+    ax.set_title("Steady vs stop-and-go")
     cb = fig.colorbar(hb, ax=ax, pad=0.01)
     cb.set_label("trajectories", color=t["ink2"]), cb.outline.set_visible(False)
-    ax.text(0.99, 0.02, "rules apply in order (walk, then bike); both also need\nthe overall trip speed below the box's max",
-            transform=ax.transAxes, ha="right", va="bottom", fontsize=7.5, color=t["ink2"], path_effects=halo)
 
     ax = axes[1, 0]
     tz = hw.select("uid", pl.col("stop_event").alias("origin_stop_event"), "inputed_timezone").unique(

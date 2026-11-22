@@ -151,13 +151,13 @@ def fig_stays(stays, home, work, n, t, path):
 
 def fig_flows(flow, n, t, path):
     x0, x1, y0, y1 = extent()
-    # from the surface color up the sequential ramp (light: toward dark blue, dark: toward light blue)
-    cmap = LinearSegmentedColormap.from_list("flow", [t["surface"], *t["seq"]])
+    # dark surface -> deep blue -> bright blue -> white (most traveled)
+    cmap = LinearSegmentedColormap.from_list("flow", [t["surface"], "#104281", "#2a78d6", "#86b6ef", "#ffffff"])
     fig, ax = plt.subplots(figsize=(9, 9))
     m = np.ma.masked_where((flow < 1) | ~grid_mask(flow.shape), flow)
     ax.set_facecolor(t["surface"])
     ax.imshow(m, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap,
-              norm=LogNorm(vmin=1, vmax=np.percentile(flow[flow > 0], 99.8)), interpolation="antialiased")
+              norm=LogNorm(vmin=1, vmax=np.percentile(flow[flow > 0], 99)), interpolation="antialiased")
     ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
     outline(ax, t, lw=0.8)
     ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
@@ -281,13 +281,13 @@ def fig_mode_maps(by_mode, n, t, path):
     fig.subplots_adjust(left=0.005, right=0.995, wspace=0.02, top=0.86, bottom=0.03)
     for ax, m, color in zip(axes, MODES, t["series"]):
         h = by_mode[m]
-        # surface -> the mode's hue -> a deeper (light theme) or paler (dark theme) shade of that hue
-        top = blend(color, t["ink"] if t is THEMES["light"] else "#ffffff", 0.35)
-        cmap = LinearSegmentedColormap.from_list(m, [t["surface"], color, top])
+        # dark surface -> deep hue -> hue -> pale hue -> white (most traveled)
+        cmap = LinearSegmentedColormap.from_list(
+            m, [t["surface"], blend(color, t["surface"], 0.55), color, blend(color, "#ffffff", 0.6), "#ffffff"])
         mm = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
         ax.set_facecolor(t["surface"])
         ax.imshow(mm, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, interpolation="antialiased",
-                  norm=LogNorm(vmin=1, vmax=max(np.percentile(h[h > 0], 99.7), 2)))
+                  norm=LogNorm(vmin=1, vmax=max(np.percentile(h[h > 0], 99), 2)))
         ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
         outline(ax, t, lw=0.8)
         ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
@@ -331,9 +331,12 @@ def main():
     for mode, t in THEMES.items():
         style(t)
         fig_stays(stays, home, work, n, t, f"{a.out}/cdmx_stays_{mode}.png")
-        fig_flows(flow, n, t, f"{a.out}/cdmx_flows_{mode}.png")
-        fig_mode_maps(by_mode, n, t, f"{a.out}/cdmx_mode_maps_{mode}.png")
         print("figures:", mode)
+    # trajectory maps: one dark rendering (white = most traveled), used in both site themes
+    style(THEMES["dark"])
+    fig_flows(flow, n, THEMES["dark"], f"{a.out}/cdmx_flows.png")
+    fig_mode_maps(by_mode, n, THEMES["dark"], f"{a.out}/cdmx_mode_maps.png")
+    print("figures: trajectory maps")
 
 
 if __name__ == "__main__":

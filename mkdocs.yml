@@ -95,6 +95,10 @@ markdown_extensions:
 
 plugins:
   - search
+  - glightbox:
+      zoomable: true
+      draggable: true
+      skip_classes: [pr-logo]
   - mkdocstrings:
       handlers:
         python:
