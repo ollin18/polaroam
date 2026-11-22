@@ -36,7 +36,8 @@ homes, 53.9k work places):
 | 10 | ~76 m | 90% | 40% |
 | 11 | ~29 m | 58% | 18% |
 
-![Homes, work places and jobs vs residents in Mexico City](../assets/figures/cdmx_h3.png)
+![Homes, work places and jobs vs residents in Mexico City](../assets/figures/cdmx_h3_light.png#only-light)
+![Homes, work places and jobs vs residents in Mexico City](../assets/figures/cdmx_h3_dark.png#only-dark)
 
 The right panel compares jobs with residents per res-8 cell, only where both counts are at
 least 5 (ratios of tiny counts are noise). It plots

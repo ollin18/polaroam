@@ -61,12 +61,16 @@ def grid_mask(shape):
     return inside(lon, lat)
 
 
-def outline(ax, t, lw=1.2):
+def outline(ax, t, lw=1.2, color=None):
     b = boundary()
     for poly in getattr(b, "geoms", [b]):
         lo, la = np.asarray(poly.exterior.coords).T
         x, y = merc(lo, la)
-        ax.plot(x, y, color=t["ink2"], lw=lw, zorder=4)
+        ax.plot(x, y, color=color or t["ink2"], lw=lw, zorder=4)
+
+
+#: Trajectory maps: white page and black text, only the map panel is dark so white-hot paths stand out.
+MAP_BG, MAP_LINE = "#1a1a19", "#898781"
 
 
 def hist2d(lat, lon, bins):
@@ -164,14 +168,14 @@ def fig_stays(stays, home, work, n, t, path):
 def fig_flows(flow, n, t, path):
     x0, x1, y0, y1 = extent()
     # dark surface -> deep blue -> bright blue -> white (most traveled)
-    cmap = LinearSegmentedColormap.from_list("flow", [t["surface"], "#104281", "#2a78d6", "#86b6ef", "#ffffff"])
+    cmap = LinearSegmentedColormap.from_list("flow", [MAP_BG, "#104281", "#2a78d6", "#86b6ef", "#ffffff"])
     fig, ax = plt.subplots(figsize=(9, 9))
     m = np.ma.masked_where((flow < 1) | ~grid_mask(flow.shape), flow)
-    ax.set_facecolor(t["surface"])
+    ax.set_facecolor(MAP_BG)
     ax.imshow(m, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap,
               norm=LogNorm(vmin=1, vmax=np.percentile(flow[flow > 0], 99)), interpolation="antialiased")
     ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
-    outline(ax, t, lw=0.8)
+    outline(ax, t, lw=0.8, color=MAP_LINE)
     ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
     for s in ax.spines.values():
         s.set_visible(False)
@@ -242,11 +246,10 @@ def clean_locations(loc, min_devices=50):
 def fig_h3(loc, t, path, k=1):
     seq = hot_cmap()
     div = LinearSegmentedColormap.from_list(
-        "div", ["#3987e5", "#86b6ef", "#f0efec" if t is THEMES["light"] else "#4a4a46", "#ec835a", "#e34948"])
+        "div", ["#1c5cab", "#86b6ef", "#f0efec" if t is THEMES["light"] else "#383835", "#ec835a", "#c93b3a"])
     loc, nh, nw = clean_locations(loc)
     h10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("homes")
     w10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("workers")
-    n_h, n_w = loc["home_latitude"].is_not_null().sum(), loc["work_latitude"].is_not_null().sum()
     # ratios of tiny counts are noise: compare cells with at least 5 homes and 5 workers
     b8 = pr.home_work_h3(loc, 8, min_count=5, geometry=False).drop_nulls(["homes", "workers"])
     H, W = b8["homes"].sum(), b8["workers"].sum()
@@ -257,10 +260,9 @@ def fig_h3(loc, t, path, k=1):
     ext = extent()
     q = lambda s: float(np.percentile(s.to_numpy(), 99))
     panels = [
-        (h10, h10["homes"], seq, LogNorm(k, q(h10["homes"])),
-         f"Homes, H3 res 10 (~76 m): {h10['homes'].sum():,} ({h10['homes'].sum() / n_h:.0%} shown)"),
+        (h10, h10["homes"], seq, LogNorm(k, q(h10["homes"])), f"Homes, H3 res 10 (~76 m): {h10['homes'].sum():,}"),
         (w10, w10["workers"], seq, LogNorm(k, q(w10["workers"])),
-         f"Work places, H3 res 10 (~76 m): {w10['workers'].sum():,} ({w10['workers'].sum() / n_w:.0%} shown)"),
+         f"Work places, H3 res 10 (~76 m): {w10['workers'].sum():,}"),
         (b8, np.clip(bal, -3, 3), div, Normalize(-3, 3), "Jobs vs residents, H3 res 8 (~530 m)"),
     ]
     for ax, (cells, vals, cmap, norm, title) in zip(axes, panels):
@@ -300,13 +302,13 @@ def fig_mode_maps(by_mode, n, t, path):
         h = by_mode[m]
         # dark surface -> deep hue -> hue -> pale hue -> white (most traveled)
         cmap = LinearSegmentedColormap.from_list(
-            m, [t["surface"], blend(color, t["surface"], 0.55), color, blend(color, "#ffffff", 0.6), "#ffffff"])
+            m, [MAP_BG, blend(color, MAP_BG, 0.55), color, blend(color, "#ffffff", 0.6), "#ffffff"])
         mm = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
-        ax.set_facecolor(t["surface"])
+        ax.set_facecolor(MAP_BG)
         ax.imshow(mm, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, interpolation="antialiased",
                   norm=LogNorm(vmin=1, vmax=max(np.percentile(h[h > 0], 99), 2)))
         ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
-        outline(ax, t, lw=0.8)
+        outline(ax, t, lw=0.8, color=MAP_LINE)
         ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
         for s in ax.spines.values():
             s.set_visible(False)
@@ -338,19 +340,20 @@ def main():
             fig_mode_features(tr, tz, t, f"{a.out}/cdmx_modes_{mode}.png")
         return
     loc = pl.read_parquet(glob.glob(f"{a.output_dir}/locations/shard=*.parquet"))
-    # one dark rendering (hot colors = most) used in both site themes
-    style(THEMES["dark"])
-    fig_h3(loc, THEMES["dark"], f"{a.out}/cdmx_h3.png")
+    for mode, t in THEMES.items():
+        style(t)
+        fig_h3(loc, t, f"{a.out}/cdmx_h3_{mode}.png")
     if a.only_h3:
         return
     stays, home, work, flow, by_mode, n = load(a.output_dir)
     print(n)
-    style(THEMES["dark"])
-    fig_stays(stays, home, work, n, THEMES["dark"], f"{a.out}/cdmx_stays.png")
-    # trajectory maps: one dark rendering (white = most traveled), used in both site themes
-    style(THEMES["dark"])
-    fig_flows(flow, n, THEMES["dark"], f"{a.out}/cdmx_flows.png")
-    fig_mode_maps(by_mode, n, THEMES["dark"], f"{a.out}/cdmx_mode_maps.png")
+    for mode, t in THEMES.items():
+        style(t)
+        fig_stays(stays, home, work, n, t, f"{a.out}/cdmx_stays_{mode}.png")
+    # trajectory maps: one image for both site themes: white page, black text, dark map panel
+    style(THEMES["light"])
+    fig_flows(flow, n, THEMES["light"], f"{a.out}/cdmx_flows.png")
+    fig_mode_maps(by_mode, n, THEMES["light"], f"{a.out}/cdmx_mode_maps.png")
     print("figures: trajectory maps")
 
 

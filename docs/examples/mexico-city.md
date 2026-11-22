@@ -56,7 +56,8 @@ pipe.run("/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet")
 
 Counts per ~150 m cell, log scale:
 
-![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays.png)
+![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_light.png#only-light)
+![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_dark.png#only-dark)
 
 ## Homes and work places on H3
 
@@ -67,7 +68,8 @@ hexagon, with no identifiers, so every cell is shown (`min_count=1`).
 cells = pipe.locations_h3(resolution=10)          # or pr.home_work_h3(locations, 10)
 ```
 
-![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3.png)
+![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_light.png#only-light)
+![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_dark.png#only-dark)
 
 Homes and work places are both at block level (res 10, ~76 m). Homes cover the residential
 city; work places concentrate in the center and along the main corridors. The jobs-vs-residents
