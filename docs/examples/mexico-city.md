@@ -37,7 +37,7 @@ sinks.write_parquet("mx_sinks.parquet")          # 2,586 coordinates; 104 s
 cfg = pr.PipelineConfig.from_json(
     "pipeline_config.json", "MX", n_shards=24,
     trajectories=pr.TrajectoryParams(min_pings=2, min_length_m=100),
-    drop_coordinates="mx_sinks.parquet",
+    remove_sinks="mx_sinks.parquet",     # or remove_sinks=True to find them during the run
 )
 pipe = pr.Pipeline("/data/out/MX_2022_12", cfg, trajectories=True, use_cuda=True)
 pipe.run("/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet")
@@ -124,8 +124,7 @@ Two artifacts were found in this data and fixed in the library:
    103k "walks" longer than 100 km: median 3.4 minutes, 18 jumps each, straightness ≈ 0. GPS
    jumps (faster than `max_speed_kmh`) now split trajectories like long gaps do.
 2. **Snapping to sink points at plausible speeds.** This drew straight spokes toward the sinks
-   in the walk and bike maps. It is fixed at the source with `find_sinks` and
-   `drop_coordinates`.
+   in the walk and bike maps. It is fixed at the source with `remove_sinks`.
 
 After both fixes, the longest walk is 34 km (it was 76,000 km), with a p99 of 6.7 km.
 

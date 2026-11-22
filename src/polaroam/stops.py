@@ -38,6 +38,7 @@ from . import engine
 from .config import StopParams, TrajectoryParams
 from .geo import haversine, with_group_row
 from .io import PingSource, read_pings
+from .quality import SinkOption, remove_sink_pings, sink_table
 
 STOP_COLUMNS = [
     "uid", "stop_event", "start_timestamp", "end_timestamp", "stop_duration",
@@ -304,6 +305,7 @@ def process_batch(pings: pl.LazyFrame | pl.DataFrame, state: StopState, p: StopP
 
 def detect_stops(pings: PingSource, params: StopParams | None = None, *, trajectories: bool = False,
                  trajectory_params: TrajectoryParams | None = None, column_map: dict[str, str] | None = None,
+                 remove_sinks: SinkOption = False, sinks_min_devices: int = 5000,
                  use_cuda: bool = False, **kwargs) -> pl.DataFrame | tuple[pl.DataFrame, pl.DataFrame]:
     """Detect stays in one shot (same result as the BigQuery/Sedona pipeline).
 
@@ -313,11 +315,17 @@ def detect_stops(pings: PingSource, params: StopParams | None = None, *, traject
     ``detect_stops(df, distance_threshold=30)``.
 
     With ``trajectories=True`` returns ``(stops, trajectories)``.
+
+    ``remove_sinks`` drops the pings at coordinate sinks first: ``True`` finds them in
+    ``pings`` (coordinates shared by ``>= sinks_min_devices`` devices, see
+    :func:`polaroam.find_sinks`); a parquet path or a DataFrame of ``latitude, longitude``
+    uses a list computed beforehand. The default ``False`` keeps every ping, like gc-lbs.
     """
     p = params or StopParams()
     if kwargs:
         p = StopParams(**{**p.__dict__, **kwargs})
     lf = read_pings(pings, column_map)
+    lf = remove_sink_pings(lf, sink_table(remove_sinks, lf, sinks_min_devices))
     det = StopDetector(p, trajectories=trajectories, trajectory_params=trajectory_params, use_cuda=use_cuda)
     out = det.update(lf, flush=True)
     return (out.stops, out.trajectories) if trajectories else out.stops

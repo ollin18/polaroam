@@ -62,7 +62,8 @@ A flat polaroam file (the same keys without `countries`) works too, and it can a
 | | `tz_polygons` | None | `tz,geometry` CSV |
 | | `column_map` | {} | `{"uid": ..., "latitude": ..., "longitude": ..., "timestamp": ...}` |
 | | `n_shards` | 1 | device groups processed independently |
-| | `drop_coordinates` | None | parquet of `latitude, longitude` whose pings are dropped first ([sinks](spatial.md#data-quality-coordinate-sinks)) |
+| | `remove_sinks` | False | drop pings at coordinate sinks first: `True` finds them, or a parquet path ([sinks](spatial.md#data-quality-coordinate-sinks)) |
+| | `sinks_min_devices` | 5000 | devices on one exact coordinate to call it a sink (with `remove_sinks=True`) |
 
 `guess_mode` thresholds are keyword arguments of [`guess_mode`](speed-and-mode.md#mode_guess-a-baseline),
 not configuration, because they can be re-applied without recomputing anything.

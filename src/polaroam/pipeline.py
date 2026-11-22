@@ -8,6 +8,7 @@ Output directory layout::
 
     out/
       manifest.json                      config + committed batches
+      sinks.parquet                      coordinate sinks found with remove_sinks=True
       stops/batch=<id>/shard=<k>.parquet         stays, appended per batch
       trajectories/batch=<id>/shard=<k>.parquet  trajectories, appended per batch
       clusters/shard=<k>.parquet                 clustered stops (current)
@@ -35,6 +36,7 @@ from .config import ClusterParams, HomeWorkParams, PipelineConfig, StopParams, T
 from .home_work import classify_home_work, home_work_locations
 from .io import PingSource, read_pings, shard_expr
 from .local_time import add_local_time
+from .quality import remove_sink_pings, sink_table
 from .stops import StopDetector, StopState
 
 _TABLES = ("stops", "trajectories", "clusters", "home_work", "locations", "_state", "_split")
@@ -107,11 +109,8 @@ class Pipeline:
             return BatchSummary(batch_id, 0, 0, 0.0)
 
         lf = read_pings(pings, column_map or cfg.column_map)
-        if cfg.drop_coordinates:
-            # coordinate sinks (default geocodes, towers): drop those pings before anything else
-            drop = pl.scan_parquet(cfg.drop_coordinates).select(
-                pl.col("latitude").cast(pl.Float64), pl.col("longitude").cast(pl.Float64))
-            lf = lf.join(drop, on=["latitude", "longitude"], how="anti")
+        # coordinate sinks (default geocodes, towers): drop those pings before anything else
+        lf = remove_sink_pings(lf, self._sinks(lf, batch_id))
         split = self._split(lf, batch_id) if cfg.n_shards > 1 else None
         n_stops = n_traj = 0
         for k in range(cfg.n_shards):
@@ -191,6 +190,7 @@ class Pipeline:
         """Delete every table and the state written by polaroam in ``output_dir``."""
         for t in _TABLES:
             shutil.rmtree(self.dir / t, ignore_errors=True)
+        (self.dir / "sinks.parquet").unlink(missing_ok=True)
         (self.dir / "manifest.json").unlink(missing_ok=True)
 
     # readers
@@ -209,6 +209,14 @@ class Pipeline:
     def locations(self) -> pl.LazyFrame:
         return self._scan("locations")
 
+    def sinks(self) -> pl.DataFrame | None:
+        """The coordinate sinks whose pings are removed (``None`` with ``remove_sinks=False``)."""
+        opt = self.config.remove_sinks
+        if opt is True:
+            f = self.dir / "sinks.parquet"
+            return pl.read_parquet(f) if f.exists() else None
+        return sink_table(opt, pl.LazyFrame())
+
     def locations_h3(self, resolution: int = 9, min_count: int = 5) -> pl.DataFrame:
         """Homes and work places per H3 cell (k-anonymous), see :func:`polaroam.h3.home_work_h3`."""
         from .h3 import home_work_h3
@@ -216,6 +224,25 @@ class Pipeline:
         return home_work_h3(self.locations(), resolution, min_count=min_count)
 
     # ----------------------------------------------------------------- private
+    def _sinks(self, lf: pl.LazyFrame, batch_id: str) -> pl.DataFrame | None:
+        """Sinks for this batch. With ``remove_sinks=True`` they are found in the first batch,
+        saved to ``sinks.parquet`` and reused by every later batch, so the removed coordinates
+        do not depend on how the data is batched."""
+        cfg = self.config
+        if cfg.remove_sinks is not True:
+            return sink_table(cfg.remove_sinks, lf)
+        f = self.dir / "sinks.parquet"
+        if f.exists():
+            return pl.read_parquet(f)
+        t = time.time()
+        sinks = sink_table(True, lf, cfg.sinks_min_devices)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        sinks.write_parquet(self.dir / "sinks.parquet.tmp")
+        (self.dir / "sinks.parquet.tmp").replace(f)
+        self._log(f"batch {batch_id}: {sinks.height:,} coordinate sinks (>= {cfg.sinks_min_devices:,} devices) "
+                  f"-> sinks.parquet ({time.time() - t:.0f}s)")
+        return sinks
+
     def _refresh_home_work(self, db: IncrementalDBSCAN, k: int) -> None:
         cfg = self.config
         clusters = db.labels()
@@ -264,5 +291,7 @@ def _config_from_dict(d: dict) -> PipelineConfig:
         stops=StopParams(**d["stops"]), dbscan=ClusterParams(**d["dbscan"]),
         home_work=HomeWorkParams(**d["home_work"]), trajectories=TrajectoryParams(**d["trajectories"]),
         column_map=d.get("column_map", {}), n_shards=d.get("n_shards", 1),
-        drop_coordinates=d.get("drop_coordinates"),
+        # output directories written before remove_sinks stored the file as drop_coordinates
+        remove_sinks=d.get("remove_sinks", d.get("drop_coordinates") or False),
+        sinks_min_devices=d.get("sinks_min_devices", 5000),
     )

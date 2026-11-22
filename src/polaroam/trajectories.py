@@ -25,6 +25,7 @@ from . import engine
 from .config import TrajectoryParams
 from .geo import DEG, M_PER_DEG, haversine, with_group_row
 from .io import PingSource, read_pings
+from .quality import SinkOption, remove_sink_pings, sink_table
 
 TRAJECTORY_COLUMNS = [
     "uid", "trajectory_id", "origin_stop_event", "destination_stop_event",
@@ -363,19 +364,24 @@ def build_trajectories(rows: pl.DataFrame | pl.LazyFrame, stops: pl.DataFrame | 
 
 def extract_trajectories(pings: PingSource, stops: pl.DataFrame | pl.LazyFrame | str,
                          params: TrajectoryParams | None = None, *, column_map: dict[str, str] | None = None,
+                         remove_sinks: SinkOption = False, sinks_min_devices: int = 5000,
                          use_cuda: bool = False, **kwargs) -> pl.DataFrame:
     """Trajectories from raw pings and already computed stays.
 
     ``stops`` can be the output of :func:`polaroam.detect_stops`, of the
     clustering / home-work stages, or a parquet path to any of them.
     Keyword arguments override :class:`TrajectoryParams` fields.
+
+    ``remove_sinks`` works as in :func:`polaroam.detect_stops`; use the same value that was
+    used for the stays, so stays and trajectories see the same pings.
     """
     tp = params or TrajectoryParams()
     if kwargs:
         tp = TrajectoryParams(**{**tp.__dict__, **kwargs})
     if isinstance(stops, str):
         stops = pl.scan_parquet(stops)
-    rows = (read_pings(pings, column_map)
+    lf = read_pings(pings, column_map)
+    rows = (remove_sink_pings(lf, sink_table(remove_sinks, lf, sinks_min_devices))
             .unique(subset=["uid", "latitude", "longitude", "timestamp"])
             .sort("uid", "timestamp", "latitude", "longitude"))
     return build_trajectories(rows, stops, tp, use_cuda=use_cuda)

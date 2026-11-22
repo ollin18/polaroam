@@ -8,7 +8,8 @@ with :meth:`PipelineConfig.from_json`.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field, fields
+import warnings
+from dataclasses import InitVar, asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +87,17 @@ class TrajectoryParams:
 
 @dataclass
 class PipelineConfig:
-    """Full pipeline configuration."""
+    """Full pipeline configuration.
+
+    remove_sinks: drop the pings at coordinate sinks (default geocodes, cell towers,
+        Wi-Fi points) before anything else. ``False`` keeps every ping (gc-lbs behavior);
+        ``True`` finds them in the data with :func:`polaroam.find_sinks` (in incremental runs,
+        in the first batch) and saves them as ``sinks.parquet`` in the output directory;
+        a path uses a parquet of ``latitude, longitude`` computed beforehand.
+    sinks_min_devices: distinct devices on one exact coordinate to call it a sink
+        (only used with ``remove_sinks=True``).
+    drop_coordinates: deprecated alias of ``remove_sinks=<path>``.
+    """
 
     timezone: str = "UTC"
     tz_polygons: str | None = None
@@ -96,7 +107,23 @@ class PipelineConfig:
     trajectories: TrajectoryParams = field(default_factory=TrajectoryParams)
     column_map: dict[str, str] = field(default_factory=dict)
     n_shards: int = 1
-    drop_coordinates: str | None = None
+    remove_sinks: bool | str = False
+    sinks_min_devices: int = 5000
+    drop_coordinates: InitVar[str | None] = None
+
+    def __post_init__(self, drop_coordinates: str | None) -> None:
+        if drop_coordinates is not None:
+            warnings.warn("drop_coordinates is deprecated; use remove_sinks=<path>.", DeprecationWarning,
+                          stacklevel=3)
+            if self.remove_sinks not in (False, drop_coordinates):
+                raise ValueError("Pass remove_sinks or drop_coordinates, not both.")
+            self.remove_sinks = str(drop_coordinates)
+        if not isinstance(self.remove_sinks, (bool, str)):
+            if isinstance(self.remove_sinks, Path):
+                self.remove_sinks = str(self.remove_sinks)
+            else:
+                raise TypeError("PipelineConfig.remove_sinks must be True/False or a parquet path "
+                                "(a DataFrame is accepted by detect_stops / extract_trajectories).")
 
     @classmethod
     def from_json(cls, path: str | Path, label: str | None = None, **overrides: Any) -> PipelineConfig:
@@ -114,9 +141,11 @@ class PipelineConfig:
         }
         if "timezone" in section:
             kw["timezone"] = section["timezone"]
-        for key in ("tz_polygons", "column_map", "n_shards", "drop_coordinates"):
+        for key in ("tz_polygons", "column_map", "n_shards", "remove_sinks", "sinks_min_devices"):
             if key in section:
                 kw[key] = section[key]
+        if "drop_coordinates" in section and "remove_sinks" not in section:  # older configs
+            kw["remove_sinks"] = section["drop_coordinates"]
         if "shards" in section.get("stops", {}):
             kw["n_shards"] = int(section["stops"]["shards"])
         kw.update(overrides)

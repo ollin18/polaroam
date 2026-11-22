@@ -19,7 +19,7 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
     if a.config:
         cfg = PipelineConfig.from_json(a.config, a.label)
     elif any(v is not None for v in (a.timezone, a.tz_polygons, a.shards, a.distance, a.time, a.min_duration,
-                                     a.drop_coordinates,
+                                     a.drop_coordinates, a.remove_sinks, a.sinks_min_devices,
                                      a.dbscan_dist, a.min_points, *_traj_args(a).values())) or a.col:
         cfg = PipelineConfig()
     else:
@@ -31,8 +31,11 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
         over["tz_polygons"] = a.tz_polygons
     if a.shards:
         over["n_shards"] = a.shards
-    if a.drop_coordinates:
-        over["drop_coordinates"] = a.drop_coordinates
+    sinks = _sink_option(a)
+    if sinks is not None:
+        over["remove_sinks"] = sinks
+    if a.sinks_min_devices is not None:
+        over["sinks_min_devices"] = a.sinks_min_devices
     if a.col:
         over["column_map"] = dict(c.split("=", 1) for c in a.col)
     stops = {k: v for k, v in (("distance_threshold", a.distance), ("time_threshold", a.time),
@@ -46,6 +49,22 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
     if tr:
         over["trajectories"] = dataclasses.replace(cfg.trajectories, **tr)
     return dataclasses.replace(cfg, **over)
+
+
+def _add_sink_args(p: argparse.ArgumentParser) -> None:
+    g = p.add_argument_group("coordinate sinks")
+    g.add_argument("--remove-sinks", nargs="?", const=True, metavar="FILE",
+                   help="drop pings at coordinate sinks: alone, find them in the input; "
+                        "with FILE, use a parquet of latitude,longitude (e.g. from `polaroam sinks`)")
+    g.add_argument("--sinks-min-devices", type=int,
+                   help="devices on one exact coordinate to call it a sink (default 5000)")
+    g.add_argument("--drop-coordinates", metavar="FILE", help=argparse.SUPPRESS)  # old name of --remove-sinks FILE
+
+
+def _sink_option(a: argparse.Namespace) -> bool | str | None:
+    if a.remove_sinks is not None and a.drop_coordinates is not None:
+        raise SystemExit("use --remove-sinks FILE or --drop-coordinates FILE, not both")
+    return a.remove_sinks if a.remove_sinks is not None else a.drop_coordinates
 
 
 def _add_traj_args(p: argparse.ArgumentParser) -> None:
@@ -77,7 +96,6 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--timezone", help="fixed (or fallback) timezone, e.g. America/Bogota")
         p.add_argument("--tz-polygons", help="CSV with tz,geometry(WKT) columns for per-stop timezones")
         p.add_argument("--shards", type=int, help="split devices into N groups (bounded memory)")
-        p.add_argument("--drop-coordinates", help="parquet of latitude,longitude to drop (coordinate sinks)")
         p.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
         p.add_argument("--distance", type=float, help="stop distance threshold (m)")
         p.add_argument("--time", type=float, help="stop time threshold (s)")
@@ -86,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--min-points", type=int, help="DBSCAN min points")
         p.add_argument("--trajectories", action="store_true", help="also extract trajectories")
         p.add_argument("--cuda", action="store_true", help="use the polars GPU engine when available")
+        _add_sink_args(p)
         _add_traj_args(p)
         if name == "run":
             p.add_argument("--overwrite", action="store_true")
@@ -100,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("stops", help="parquet with stops (stops, clusters or home_work table)")
     t.add_argument("out")
     t.add_argument("--cuda", action="store_true")
+    _add_sink_args(t)
     _add_traj_args(t)
     k = sub.add_parser("sinks", help="find coordinate sinks (default geocodes, towers) in pings")
     k.add_argument("pings")
@@ -129,7 +149,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from .trajectories import extract_trajectories
 
-        tr = extract_trajectories(a.pings, a.stops, use_cuda=a.cuda,
+        tr = extract_trajectories(a.pings, a.stops, use_cuda=a.cuda, remove_sinks=_sink_option(a) or False,
+                                  sinks_min_devices=a.sinks_min_devices or 5000,
                                   **{k: v for k, v in _traj_args(a).items() if v is not None})
         tr.write_parquet(a.out)
         print(f"{tr.height:,} trajectories -> {a.out}")

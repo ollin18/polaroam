@@ -49,7 +49,27 @@ snapped there create fake stays and homes, and they pull real trips into straigh
 toward those points. No speed test catches them: a snap to a point 5 km away ten minutes later
 looks like 30 km/h.
 
-**Find them and drop those pings before anything else:**
+`remove_sinks` drops those pings before anything else, so they never become stays, homes,
+work places or trajectory vertices. There are two ways to use it.
+
+**Let polaroam find them** (`remove_sinks=True`):
+
+=== "Python"
+
+    ```python
+    cfg = pr.PipelineConfig(timezone="America/Mexico_City", remove_sinks=True, sinks_min_devices=5000)
+    pipe = pr.Pipeline("out/MX", cfg)
+    pipe.run("raw/MX/**/*.parquet")
+    pipe.sinks()                     # the removed coordinates, saved as out/MX/sinks.parquet
+    ```
+
+=== "Command line"
+
+    ```bash
+    polaroam run "raw/MX/**/*.parquet" out/MX --remove-sinks --sinks-min-devices 5000 ...
+    ```
+
+**Or find them first and pass the file**, e.g. to inspect them or reuse one list across runs:
 
 === "Python"
 
@@ -57,18 +77,38 @@ looks like 30 km/h.
     sinks = pr.find_sinks("raw/MX/**/*.parquet", min_devices=5000)    # two streaming passes
     sinks.write_parquet("mx_sinks.parquet")
 
-    cfg = pr.PipelineConfig(timezone="America/Mexico_City", drop_coordinates="mx_sinks.parquet")
+    cfg = pr.PipelineConfig(timezone="America/Mexico_City", remove_sinks="mx_sinks.parquet")
     ```
 
 === "Command line"
 
     ```bash
     polaroam sinks "raw/MX/**/*.parquet" mx_sinks.parquet --min-devices 5000
-    polaroam run "raw/MX/**/*.parquet" out/MX --drop-coordinates mx_sinks.parquet ...
+    polaroam run "raw/MX/**/*.parquet" out/MX --remove-sinks mx_sinks.parquet ...
     ```
 
-`drop_coordinates` is opt-in: it deliberately departs from gc-lbs, which keeps every ping. The
-list is fixed for an output directory, so incremental runs stay consistent.
+The standalone functions take the same option:
+
+```python
+stops = pr.detect_stops(pings, remove_sinks=True, sinks_min_devices=5000)
+trips = pr.extract_trajectories(pings, stops, remove_sinks=True, sinks_min_devices=5000)
+# or remove_sinks="mx_sinks.parquet", or remove_sinks=<a DataFrame of latitude, longitude>
+```
+
+`remove_sinks` is off by default: it deliberately departs from gc-lbs, which keeps every ping,
+and the default reproduces gc-lbs exactly.
+
+!!! warning "`remove_sinks=True` in incremental runs"
+    With `Pipeline.update`, the sinks are found in the **first batch**, saved to
+    `sinks.parquet`, and reused by every later batch. This keeps the result independent of
+    later batching, but one day of data finds far fewer sinks than a month: in Mexico City, one
+    day (2022-12-05) has 92 coordinates with ≥ 5,000 devices, the whole month 2,586. For daily
+    runs, run `find_sinks` on a longer period first and pass the file.
+
+!!! note "Nothing found?"
+    The threshold is absolute. On small data (the 500-device example, a sample), no coordinate
+    reaches 5,000 devices: polaroam then warns that no ping was removed. Lower
+    `sinks_min_devices` to fit the size of your data.
 
 !!! tip "Choosing `min_devices`"
     Coordinates are often rounded to ~1 m. Over a month with ~1.6M devices, real busy places

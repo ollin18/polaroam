@@ -20,6 +20,9 @@ polaroam run "raw/CO/*.parquet" out/CO --timezone America/Bogota --trajectories 
 # reuse a gc-lbs pipeline_config.json (country section), on the GPU, in 24 shards
 polaroam run raw/MX out/MX --config pipeline_config.json --label MX --shards 24 --cuda
 
+# drop coordinate sinks (default geocodes, towers) found in the input
+polaroam run "raw/MX/*.parquet" out/MX --config pipeline_config.json --label MX --remove-sinks
+
 # day by day
 polaroam update "raw/MX/date=2022-12-01/*.parquet" out/MX --timezone America/Mexico_City \
     --trajectories --batch-id 2022-12-01
@@ -38,7 +41,8 @@ polaroam trajectories "raw/MX/**/*.parquet" "out/MX/stops/**/*.parquet" trips.pa
 | `--timezone TZ` | run, update | fixed (or fallback) timezone |
 | `--tz-polygons CSV` | run, update | `tz,geometry` CSV for per-stay timezones |
 | `--shards N` | run, update | split devices into N groups |
-| `--drop-coordinates FILE` | run, update | drop pings at these coordinates (sinks) before anything else |
+| `--remove-sinks [FILE]` | run, update, trajectories | drop pings at coordinate sinks first: alone, find them in the input (saved to `OUTPUT/sinks.parquet`); with `FILE`, use that list |
+| `--sinks-min-devices N` | run, update, trajectories | devices on one exact coordinate to call it a sink (default 5000) |
 | `--min-devices N` | sinks | devices sharing an exact coordinate to call it a sink (default 5000) |
 | `--col std=yours` | run, update | column mapping, repeatable (`--col uid=aid`) |
 | `--distance`, `--time`, `--min-duration` | run, update | stay parameters (m, s, s) |
