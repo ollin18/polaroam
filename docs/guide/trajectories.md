@@ -15,11 +15,15 @@ trips = pr.extract_trajectories(pings, "out/MX/home_work/*.parquet", min_pings=2
 ## How trajectories are built
 
 - A ping inside a stay's `[start, end]` is a stay ping. Any other ping is a moving ping.
-- Consecutive moving pings of a device form **one trajectory** while they are less than
-  `max_time_gap` apart and no stay happens between them.
+- Consecutive moving pings of a device form **one trajectory** while three things hold:
+    - they are less than `max_time_gap` (30 min) apart;
+    - no stay happens between them;
+    - the step between them is **not a GPS jump** (faster than `max_speed_kmh`).
 - The stay just before (after) the trajectory, if it ended (starts) within `max_time_gap`,
   becomes its **origin (destination)**. Its location is added as the first (last) vertex, so
-  trajectories connect stays.
+  trajectories connect stays. When jumps split the movement between two stays into pieces,
+  only the first piece connects to the origin and only the last to the destination, and only
+  if reaching that stay is itself not a jump.
 - The line is simplified with **Douglas-Peucker** (`simplify_tolerance` meters).
 
 ![Raw pings, stays and the simplified trajectory of one trip](../assets/figures/simplification_light.png#only-light){ width="620" }
@@ -56,15 +60,23 @@ compared at micrometer resolution, so CPU and GPU arithmetic cannot break ties d
 | `max_time_gap` | 1800 s | split at longer gaps; max gap to the origin / destination stay |
 | `simplify_tolerance` | 30 m | Douglas-Peucker tolerance. **0 keeps every ping** (full resolution) |
 | `min_pings` | 1 | minimum moving pings (2 drops single-ping "trips") |
-| `min_length_m` | 0 | minimum path length (100 drops GPS jitter near stays) |
+| `min_length_m` | 100 m | minimum path length (drops GPS jitter near stays; 0 keeps all) |
 | `wkt_measure` | False | write `LINESTRING M` with time as the measure |
 | `speed_window`, `speed_max_gap`, `max_speed_kmh`, `slow_speed_kmh` | | see [Speed and transport mode](speed-and-mode.md) |
 
 !!! tip "Micro-trajectories"
-    Without filters, about 40% of rows are tiny "trajectories": a single moving ping between
-    two stays, or GPS jitter just outside a stay's 20 m radius (median length ~54 m in the
-    example data). `min_pings=2, min_length_m=100` removes them. The filters are off by default
-    so that nothing disappears unless asked.
+    About 40% of raw "trajectories" are tiny: a single moving ping between two stays, or GPS
+    jitter just outside a stay's 20 m radius (median length ~54 m in the example data).
+    `min_length_m` (100 m by default) removes them; `min_pings=2` also drops single-ping trips.
+    Set `min_length_m=0` to keep everything.
+
+!!! danger "Why jumps split trajectories"
+    LBS pings can **ping-pong** between the true position and a distant fallback point (a cell
+    tower, a default geocode), many times within a few minutes. Before jump splitting, a month
+    of Mexico City had 103k "walks" longer than 100 km. Their median duration was 3.4 minutes,
+    with 18 jumps each and straightness ≈ 0: every bounce added kilometers of fake path. A jump
+    now ends the trajectory just as a long gap does, so ping-pong breaks into short pieces that
+    the length filter removes.
 
 ## Full resolution vs simplified
 

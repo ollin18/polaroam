@@ -339,6 +339,7 @@ def main():
     if not (Path(a.work_dir) / "manifest.json").exists():
         pipe.run(a.pings)
     stops, tr, hw = pipe.stops().collect(), pipe.trajectories_table().collect(), pipe.home_work().collect()
+    tr = pr.guess_mode(tr)  # current rules, whatever version wrote the table
     pings = pr.read_pings(a.pings).collect()
     Path(a.out).mkdir(parents=True, exist_ok=True)
     for mode, t in THEMES.items():

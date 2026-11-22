@@ -20,13 +20,13 @@ pipe.run("data/veraset_movement_416.snappy.parquet")
 ```
 
 ```text
-[polaroam] batch all shard 1/1: 368,114 stops, 141,924 trajectories (32s)
+[polaroam] batch all shard 1/1: 368,114 stops, 164,608 trajectories (40s)
 ```
 
 | Output | Rows |
 |---|---|
 | stays | 368,114 |
-| trajectories (≥ 2 pings, ≥ 100 m) | 141,924 |
+| trajectories (≥ 2 pings, ≥ 100 m) | 164,608 |
 | devices with a home | 498 |
 
 ## Where people stay
@@ -80,10 +80,10 @@ trips.group_by("mode_guess").agg(
 
 | Mode | Trajectories | Median p85 | Median max | Median length |
 |---|---|---|---|---|
-| unknown | 57,942 | | | |
-| motorized | 42,609 | 35.6 km/h | 67 km/h | 8.6 km |
-| walk | 26,492 | 2.0 km/h | 3.2 km/h | 0.3 km |
-| bike | 14,881 | 12.5 km/h | 18 km/h | 1.6 km |
+| unknown | 69,216 | | | |
+| motorized | 52,684 | 37.0 km/h | 68.5 km/h | 6.3 km |
+| walk | 26,212 | 2.1 km/h | 3.3 km/h | 0.3 km |
+| bike | 16,496 | 12.4 km/h | 18.4 km/h | 1.6 km |
 
 ![Speed features by mode](../assets/figures/mode_features_light.png#only-light)
 ![Speed features by mode](../assets/figures/mode_features_dark.png#only-dark)
@@ -94,7 +94,7 @@ trips.group_by("mode_guess").agg(
   are a distinct minority, mostly highways and rail.
 - **Mode share by hour**: motorized trips dominate the morning and evening peaks; slow
   movement dominates the night.
-- **Trip length by mode**: medians of 0.3 km (walk), 1.6 km (bike) and 8.6 km (motorized).
+- **Trip length by mode**: medians of 0.3 km (walk), 1.6 km (bike) and 6.3 km (motorized).
 
 Speed over time for one trip of each class (shaded: gaps > 5 min, not used):
 

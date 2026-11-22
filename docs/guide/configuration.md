@@ -52,16 +52,17 @@ A flat polaroam file (the same keys without `countries`) works too, and it can a
 | Trajectories | `max_time_gap` | 1800 s | split at longer gaps; max gap to the origin / destination stay |
 | | `simplify_tolerance` | 30 m | Douglas-Peucker tolerance (0 keeps every ping) |
 | | `min_pings` | 1 | minimum moving pings per trajectory |
-| | `min_length_m` | 0 m | minimum trajectory length |
+| | `min_length_m` | 100 m | minimum trajectory length (0 keeps all) |
 | | `speed_window` | 30 s | minimum window for speeds |
 | | `speed_max_gap` | 300 s | longer gaps are not used for speeds |
-| | `max_speed_kmh` | 250 | faster steps are GPS jumps |
+| | `max_speed_kmh` | 250 | faster steps are GPS jumps and split trajectories |
 | | `slow_speed_kmh` | 7 | threshold for `frac_slow` |
 | | `wkt_measure` | False | `LINESTRING M` with time as the measure |
 | Pipeline | `timezone` | UTC | fixed timezone, or fallback for polygons |
 | | `tz_polygons` | None | `tz,geometry` CSV |
 | | `column_map` | {} | `{"uid": ..., "latitude": ..., "longitude": ..., "timestamp": ...}` |
 | | `n_shards` | 1 | device groups processed independently |
+| | `drop_coordinates` | None | parquet of `latitude, longitude` whose pings are dropped first ([sinks](spatial.md#data-quality-coordinate-sinks)) |
 
 `guess_mode` thresholds are keyword arguments of [`guess_mode`](speed-and-mode.md#mode_guess-a-baseline),
 not configuration, because they can be re-applied without recomputing anything.

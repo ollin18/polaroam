@@ -35,8 +35,10 @@ noise every 2 s would look like 36 km/h; with displacement it reads under 8 km/h
 - Intervals longer than `speed_max_gap` (300 s) are not used: a speed averaged over a 20-minute
   gap mixes moving and waiting. Such gaps are often the time between leaving a stay and the
   first moving ping.
-- Steps faster than `max_speed_kmh` (250 km/h) are **GPS jumps**: their windows are dropped
-  and they are counted in `n_jumps`.
+- Steps faster than `max_speed_kmh` (250 km/h) are **GPS jumps**: they split trajectories
+  (see [Trajectories](trajectories.md)). A jump between a stay and the first or last ping
+  stops that stay from being used as the trip's origin or destination. Any jump that remains
+  inside a trip has its window dropped and is counted in `n_jumps`.
 
 With \(W = \sum_i w_i\) over the valid windows:
 
@@ -97,27 +99,34 @@ trips before modeling.
 | Label | Rule (defaults) |
 |---|---|
 | `unknown` | duration < 60 s, fewer than 2 pings, no valid speed, **or median ping gap > 300 s** (too sparse to measure speed) |
-| `walk` | p85 < 8 km/h **and** max < 15 km/h |
-| `bike` | p85 < 22 km/h **and** max < 35 km/h |
+| `walk` | p85 < 8 km/h, max < 15 km/h, **and** overall speed < 15 km/h |
+| `bike` | p85 < 22 km/h, max < 35 km/h, **and** overall speed < 35 km/h |
 | `motorized` | anything faster (car, bus, metro, …) |
 
-The max conditions matter. A trip that waits for 20 minutes and then drives for 2 has a
-walking-like p85, but no walker reaches 60 km/h. Re-run the rules with your own thresholds
-without recomputing anything:
+The max and overall conditions matter:
+
+- **Max:** a trip that waits for 20 minutes and then drives for 2 has a walking-like p85, but
+  no walker reaches 60 km/h.
+- **Overall:** the overall speed (`length_m / duration`, gaps included) catches distance
+  covered *across* gaps longer than `speed_max_gap`, which the windowed speeds rightly skip. It
+  is a lower bound of the moving speed, since the duration includes waiting: 30 km in 20
+  minutes is not a walk, however slow the observed windows look.
+
+Re-run the rules with your own thresholds without recomputing anything:
 
 ```python
 trips = pr.guess_mode(trips, walk_p85_kmh=7, walk_max_kmh=12, bike_p85_kmh=25,
                       bike_max_kmh=40, max_ping_gap_s=180)
 ```
 
-In the example data (with `min_pings=2, min_length_m=100`), 41% of trajectories are `unknown`
+In the example data (`min_pings=2`, `min_length_m=100`), 42% of trajectories are `unknown`
 because their pings are minutes apart. The rest look plausible:
 
-| Mode | Trajectories | Median p85 | Median max | Median length |
-|---|---|---|---|---|
-| motorized | 42,609 | 35.6 km/h | 67 km/h | 8.6 km |
-| walk | 26,492 | 2.0 km/h | 3.2 km/h | 0.3 km |
-| bike | 14,881 | 12.5 km/h | 18 km/h | 1.6 km |
+| Mode | Trajectories | Median p85 | Median max | Median length | Longest |
+|---|---|---|---|---|---|
+| motorized | 52,684 | 37.0 km/h | 68.5 km/h | 6.3 km | 535 km (intercity) |
+| walk | 26,212 | 2.1 km/h | 3.3 km/h | 0.3 km | 27.7 km |
+| bike | 16,496 | 12.4 km/h | 18.4 km/h | 1.6 km | 59.6 km |
 
 !!! warning "`walk` is not only walking"
     The `walk` class is slower than real walking (~4–5 km/h). Much of it is lingering or GPS

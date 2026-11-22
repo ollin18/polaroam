@@ -9,23 +9,64 @@ aggregated maps only: densities over hundreds of thousands of devices.
 from __future__ import annotations
 
 import argparse
+import functools
 import glob
+import json
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from make_figures import ATTRIBUTION, THEMES, basemap, fig_mode_features, merc, style
+from make_figures import ATTRIBUTION, R_MERC, THEMES, basemap, fig_mode_features, merc, style
 from matplotlib.collections import PolyCollection
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 
 import polaroam as pr
 
-LAT, LON = (19.20, 19.60), (-99.34, -98.94)
+BOUNDARY = Path(__file__).parent / "data" / "cdmx_boundary.geojson"   # INEGI Marco Geoestadístico, CVE_ENT 09
 
 
-def extent():
-    x, y = merc(np.array(LON), np.array(LAT))
-    return x[0], x[1], y[0], y[1]
+@functools.lru_cache(maxsize=1)
+def boundary():
+    import shapely
+
+    geo = json.loads(BOUNDARY.read_text())["features"][0]["geometry"]
+    poly = shapely.geometry.shape(geo)
+    shapely.prepare(poly)
+    return poly
+
+
+def extent(margin=0.02):
+    lo0, la0, lo1, la1 = boundary().bounds
+    x, y = merc(np.array([lo0, lo1]), np.array([la0, la1]))
+    mx, my = (x[1] - x[0]) * margin, (y[1] - y[0]) * margin
+    return x[0] - mx, x[1] + mx, y[0] - my, y[1] + my
+
+
+def inside(lon, lat):
+    import shapely
+
+    return shapely.contains_xy(boundary(), np.asarray(lon), np.asarray(lat))
+
+
+def grid_mask(shape):
+    """True for raster cells whose center is inside the city boundary."""
+    x0, x1, y0, y1 = extent()
+    ny, nx = shape
+    xs = x0 + (np.arange(nx) + 0.5) * (x1 - x0) / nx
+    ys = y0 + (np.arange(ny) + 0.5) * (y1 - y0) / ny
+    X, Y = np.meshgrid(xs, ys)
+    lon = np.degrees(X / R_MERC)
+    lat = np.degrees(np.arctan(np.sinh(Y / R_MERC)))
+    return inside(lon, lat)
+
+
+def outline(ax, t, lw=1.2):
+    b = boundary()
+    for poly in getattr(b, "geoms", [b]):
+        lo, la = np.asarray(poly.exterior.coords).T
+        x, y = merc(lo, la)
+        ax.plot(x, y, color=t["ink2"], lw=lw, zorder=4)
 
 
 def hist2d(lat, lon, bins):
@@ -35,13 +76,38 @@ def hist2d(lat, lon, bins):
     return h
 
 
+MODES = ["walk", "bike", "motorized"]
+MODE_COLS = ["speed_p85_kmh", "speed_max_kmh", "duration", "n_pings", "ping_gap_median_s", "length_m"]
+
+
+def rasterize_lines(coords: pl.Series, bins: int):
+    """Pixel counts of polylines: every segment is sampled about once per pixel, so a pixel
+    counts (roughly) the trajectories passing through it, not the vertices it holds."""
+    x0, x1, y0, y1 = extent()
+    step = (x1 - x0) / bins
+    df = pl.DataFrame({"c": coords}).with_row_index("t").explode("c").drop_nulls()
+    xy = np.asarray(df["c"].to_list())
+    t = df["t"].to_numpy()
+    x, y = merc(xy[:, 0], xy[:, 1])
+    same = t[1:] == t[:-1]
+    ax_, ay_, bx_, by_ = x[:-1][same], y[:-1][same], x[1:][same], y[1:][same]
+    n = np.maximum(1, np.ceil(np.hypot(bx_ - ax_, by_ - ay_) / step).astype(np.int64))
+    seg = np.repeat(np.arange(len(n)), n)
+    k = np.arange(n.sum()) - np.repeat(np.cumsum(n) - n, n)
+    f = k / n[seg]
+    px, py = ax_[seg] + f * (bx_[seg] - ax_[seg]), ay_[seg] + f * (by_[seg] - ay_[seg])
+    h, _, _ = np.histogram2d(py, px, bins=bins, range=[[y0, y1], [x0, x1]])
+    return h
+
+
 def load(out):
     bins_pts, bins_flow = 260, 900
     stays = np.zeros((bins_pts, bins_pts))
     home = np.zeros_like(stays)
     work = np.zeros_like(stays)
     flow = np.zeros((bins_flow, bins_flow))
-    n = {"stays": 0, "home": 0, "work": 0, "trajectories": 0, "vertices": 0, "devices": 0}
+    by_mode = {m: np.zeros((bins_flow, bins_flow)) for m in MODES}
+    n = {"stays": 0, "home": 0, "work": 0, "trajectories": 0, "vertices": 0, "devices": 0, **{m: 0 for m in MODES}}
     for f in sorted(glob.glob(f"{out}/clusters/shard=*.parquet")):
         c = pl.read_parquet(f, columns=["uid", "stop_latitude", "stop_longitude"])
         stays += hist2d(c["stop_latitude"].to_numpy(), c["stop_longitude"].to_numpy(), bins_pts)
@@ -56,12 +122,15 @@ def load(out):
         n["home"] += h.height
         n["work"] += w.height
     for f in sorted(glob.glob(f"{out}/trajectories/**/shard=*.parquet", recursive=True)):
-        v = pl.read_parquet(f, columns=["coordinates"]).explode("coordinates").drop_nulls()
-        xy = np.asarray(v["coordinates"].to_list())
-        flow += hist2d(xy[:, 1], xy[:, 0], bins_flow)
-        n["trajectories"] += pl.read_parquet(f, columns=["uid"]).height
-        n["vertices"] += len(xy)
-    return stays, home, work, flow, n
+        tr = pr.guess_mode(pl.read_parquet(f, columns=["coordinates", "n_points", *MODE_COLS]))
+        flow += rasterize_lines(tr["coordinates"], bins_flow)
+        for m in MODES:
+            sub_ = tr.filter(pl.col("mode_guess") == m)
+            by_mode[m] += rasterize_lines(sub_["coordinates"], bins_flow)
+            n[m] += sub_.height
+        n["trajectories"] += tr.height
+        n["vertices"] += int(tr["n_points"].sum())
+    return stays, home, work, flow, by_mode, n
 
 
 def fig_stays(stays, home, work, n, t, path):
@@ -74,9 +143,10 @@ def fig_stays(stays, home, work, n, t, path):
     for ax, (h, title) in zip(axes, panels):
         ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
         basemap(ax, t)
-        m = np.ma.masked_where(h < 1, h)
+        m = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
         im = ax.imshow(m, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, alpha=0.88, zorder=2,
                        norm=LogNorm(vmin=1, vmax=max(h.max(), 2)), interpolation="nearest")
+        outline(ax, t)
         ax.set_title(title, color=t["ink"]), ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
         for s in ax.spines.values():
             s.set_visible(False)
@@ -95,21 +165,19 @@ def fig_flows(flow, n, t, path):
     # from the surface color up the sequential ramp (light: toward dark blue, dark: toward light blue)
     cmap = LinearSegmentedColormap.from_list("flow", [t["surface"], *t["seq"]])
     fig, ax = plt.subplots(figsize=(9, 9))
-    m = np.ma.masked_where(flow < 1, flow)
+    m = np.ma.masked_where((flow < 1) | ~grid_mask(flow.shape), flow)
     ax.set_facecolor(t["surface"])
     ax.imshow(m, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap,
               norm=LogNorm(vmin=1, vmax=np.percentile(flow[flow > 0], 99.8)), interpolation="antialiased")
     ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
+    outline(ax, t, lw=0.8)
     ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
     for s in ax.spines.values():
         s.set_visible(False)
-    ax.set_title(f"{n['trajectories'] / 1e6:.1f}M trajectories, {n['vertices'] / 1e6:.0f}M simplified vertices",
-                 color=t["ink"], fontsize=12)
+    ax.set_title(f"{n['trajectories'] / 1e6:.1f}M trajectories in one month (trajectories through each ~50 m pixel)",
+                 color=t["ink"], fontsize=11)
     fig.savefig(path, dpi=130, bbox_inches="tight")
     plt.close(fig)
-
-
-ZOOM_LAT, ZOOM_LON = (19.400, 19.428), (-99.185, -99.150)   # Roma - Condesa - Juárez, ~3.5 km
 
 
 def hexes(cells: pl.DataFrame):
@@ -132,13 +200,24 @@ def count_ticks(cb, vmin, vmax):
     cb.minorticks_off()
 
 
+def clip_cells(cells, values):
+    """Keep H3 cells whose center is inside the city boundary."""
+    import polars_h3 as plh3
+
+    c = cells.select(plh3.cell_to_lng("h3_cell").alias("lo"), plh3.cell_to_lat("h3_cell").alias("la"))
+    keep = inside(c["lo"].to_numpy(), c["la"].to_numpy())
+    return cells.filter(pl.Series(keep)), np.asarray(values)[keep]
+
+
 def draw_hex(ax, cells, values, cmap, norm, t, ext):
+    cells, values = clip_cells(cells, values)
     x0, x1, y0, y1 = ext
     ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
     basemap(ax, t)
     pc = PolyCollection(hexes(cells), array=np.asarray(values, float), cmap=cmap, norm=norm,
                         edgecolors="none", alpha=0.9, zorder=2)
     ax.add_collection(pc)
+    outline(ax, t)
     ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
     for s in ax.spines.values():
         s.set_visible(False)
@@ -198,27 +277,26 @@ def fig_h3(loc, t, path, k=5):
     plt.close(fig)
 
 
-def fig_h3_zoom(loc, t, path, k=5):
-    seq = LinearSegmentedColormap.from_list("seq", t["seq"])
-    loc, _, _ = clean_locations(loc)
-    x, y = merc(np.array(ZOOM_LON), np.array(ZOOM_LAT))
-    ext = (x[0], x[1], y[0], y[1])
-    box = (pl.col("h3_latitude").is_between(*ZOOM_LAT)) & (pl.col("h3_longitude").is_between(*ZOOM_LON))
-    h11 = pr.home_work_h3(loc, 11, min_count=k).drop_nulls("homes").filter(box)
-    w10 = pr.home_work_h3(loc, 10, min_count=k).drop_nulls("workers").filter(box)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 7.2))
-    fig.subplots_adjust(left=0.005, right=0.995, wspace=0.04, top=0.88, bottom=0.12)
-    for ax, cells, col, title in [(axes[0], h11, "homes", "Homes, H3 res 11 (~29 m)"),
-                                  (axes[1], w10, "workers", "Work places, H3 res 10 (~76 m)")]:
-        vmax = max(float(np.percentile(cells[col].to_numpy(), 99)), k + 1)
-        pc = draw_hex(ax, cells, cells[col], seq, LogNorm(k, vmax), t, ext)
-        ax.set_title(title, color=t["ink"], fontsize=11)
-        cb = fig.colorbar(pc, ax=ax, orientation="horizontal", fraction=0.04, pad=0.02, shrink=0.7)
-        cb.outline.set_visible(False), cb.set_label("devices per cell (log)", color=t["ink2"])
-        count_ticks(cb, k, vmax)
-    fig.suptitle(f"Roma, Condesa and Juárez at block level (cells with fewer than {k} devices are hidden)",
-                 x=0.008, y=0.98, ha="left", fontsize=13, fontweight="bold", color=t["ink"])
-    fig.text(0.008, 0.008, ATTRIBUTION, fontsize=7, color=t["muted"])
+def fig_mode_maps(by_mode, n, t, path):
+    """City-wide trajectory density for each mode_guess class, each in its own hue."""
+    x0, x1, y0, y1 = extent()
+    fig, axes = plt.subplots(1, 3, figsize=(16, 6.4))
+    fig.subplots_adjust(left=0.005, right=0.995, wspace=0.02, top=0.86, bottom=0.03)
+    for ax, m, color in zip(axes, MODES, t["series"]):
+        h = by_mode[m]
+        cmap = LinearSegmentedColormap.from_list(m, [t["surface"], color, t["ink"] if t is THEMES["light"] else "#ffffff"])
+        mm = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
+        ax.set_facecolor(t["surface"])
+        ax.imshow(mm, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, interpolation="antialiased",
+                  norm=LogNorm(vmin=1, vmax=max(np.percentile(h[h > 0], 99.7), 2)))
+        ax.set_xlim(x0, x1), ax.set_ylim(y0, y1)
+        outline(ax, t, lw=0.8)
+        ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
+        for s in ax.spines.values():
+            s.set_visible(False)
+        ax.set_title(f"{m}: {n[m] / 1e6:.2f}M trajectories", color=t["ink"], fontsize=12)
+    fig.suptitle("Where each mode travels (baseline mode_guess; density of trajectories, log scale)",
+                 x=0.008, y=0.985, ha="left", fontsize=13, fontweight="bold", color=t["ink"])
     fig.savefig(path, dpi=130)
     plt.close(fig)
 
@@ -231,8 +309,9 @@ def main():
     ap.add_argument("--modes", action="store_true", help="mode-feature figure from the trajectories (needs v0.3+ output)")
     a = ap.parse_args()
     if a.modes:
-        cols = ["uid", "origin_stop_event", "start_timestamp", "length_m", "speed_p85_kmh", "speed_cv", "mode_guess"]
-        tr = pl.read_parquet(glob.glob(f"{a.output_dir}/trajectories/**/shard=*.parquet", recursive=True), columns=cols)
+        cols = ["uid", "origin_stop_event", "start_timestamp", "speed_cv", *MODE_COLS]
+        tr = pr.guess_mode(pl.read_parquet(glob.glob(f"{a.output_dir}/trajectories/**/shard=*.parquet", recursive=True),
+                                           columns=cols))
         tz = (tr.select("uid", pl.col("origin_stop_event").alias("stop_event")).drop_nulls().unique()
               .with_columns(pl.lit("America/Mexico_City").alias("inputed_timezone")))
         print(tr["mode_guess"].value_counts().sort("count", descending=True))
@@ -246,15 +325,15 @@ def main():
     for mode, t in THEMES.items():
         style(t)
         fig_h3(loc, t, f"{a.out}/cdmx_h3_{mode}.png")
-        fig_h3_zoom(loc, t, f"{a.out}/cdmx_h3_zoom_{mode}.png")
     if a.only_h3:
         return
-    stays, home, work, flow, n = load(a.output_dir)
+    stays, home, work, flow, by_mode, n = load(a.output_dir)
     print(n)
     for mode, t in THEMES.items():
         style(t)
         fig_stays(stays, home, work, n, t, f"{a.out}/cdmx_stays_{mode}.png")
         fig_flows(flow, n, t, f"{a.out}/cdmx_flows_{mode}.png")
+        fig_mode_maps(by_mode, n, t, f"{a.out}/cdmx_mode_maps_{mode}.png")
         print("figures:", mode)
 
 

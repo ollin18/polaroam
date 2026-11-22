@@ -51,3 +51,19 @@ def test_coordinate_sinks():
     assert sinks.rows() == [(19.4326, -99.1332, 12)]
     kept = pr.drop_sinks(loc, sinks, "home_latitude", "home_longitude").collect()
     assert kept.height == 4 and 19.4326 not in kept["home_latitude"].to_list()
+
+
+def test_find_sinks_and_pipeline_drop(tmp_path, pings):
+    # plant a default-geocode point shared by 20 devices
+    devs = pings["uid"].unique().sort().head(20).to_list()
+    t0 = int(pings["timestamp"].min())
+    planted = pl.DataFrame({"uid": devs, "latitude": [19.4326] * 20, "longitude": [-99.1332] * 20,
+                            "timestamp": [t0 + 1000 * i for i in range(20)]})
+    p = pl.concat([pings, planted])
+    sinks = pr.find_sinks(p, min_devices=15)
+    assert sinks.select("latitude", "longitude").rows() == [(19.4326, -99.1332)]
+    sinks.write_parquet(tmp_path / "sinks.parquet")
+    cfg = pr.PipelineConfig(drop_coordinates=str(tmp_path / "sinks.parquet"))
+    pipe = pr.Pipeline(tmp_path / "out", cfg, verbose=False)
+    pipe.run(p)
+    assert pipe.stops().collect().sort("uid", "stop_event").equals(pr.detect_stops(pings).sort("uid", "stop_event"))

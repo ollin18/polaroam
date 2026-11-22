@@ -136,20 +136,25 @@ def guess_mode(trajectories: pl.DataFrame | pl.LazyFrame, *, walk_p85_kmh: float
     * ``unknown``: shorter than ``min_duration_s``, fewer than ``min_pings`` pings, no speeds, or
       pings too sparse to measure speed (median gap above ``max_ping_gap_s``: the "speed"
       then averages movement with standing still);
-    * ``walk``: cruising speed (p85) below ``walk_p85_kmh`` and never above ``walk_max_kmh``;
-    * ``bike``: p85 below ``bike_p85_kmh`` and never above ``bike_max_kmh``;
+    * ``walk``: cruising speed (p85) below ``walk_p85_kmh``, never above ``walk_max_kmh``, and an
+      overall trip speed (``length_m / duration``, gaps included) below ``walk_max_kmh``;
+    * ``bike``: p85 below ``bike_p85_kmh``, never above ``bike_max_kmh``, and an overall trip
+      speed below ``bike_max_kmh``;
     * ``motorized``: anything faster (cars, buses, metro, ...).
 
     A transparent starting point to replace with a trained model; recompute with other
     thresholds with ``guess_mode(trajectories, walk_p85_kmh=...)``.
     """
     p85, vmax = pl.col("speed_p85_kmh"), pl.col("speed_max_kmh")
+    # Overall speed over the whole trip, unobserved gaps included: a lower bound of the moving
+    # speed, so it catches distance covered across long gaps that the windowed speeds skip.
+    overall = pl.when(pl.col("duration") > 0).then(pl.col("length_m") / pl.col("duration") * 3.6).otherwise(0.0)
     sparse = pl.col("ping_gap_median_s") > max_ping_gap_s
     expr = (pl.when((pl.col("duration") < min_duration_s) | (pl.col("n_pings") < min_pings) | p85.is_null()
                     | sparse.fill_null(True))
             .then(pl.lit("unknown"))
-            .when((p85 < walk_p85_kmh) & (vmax < walk_max_kmh)).then(pl.lit("walk"))
-            .when((p85 < bike_p85_kmh) & (vmax < bike_max_kmh)).then(pl.lit("bike"))
+            .when((p85 < walk_p85_kmh) & (vmax < walk_max_kmh) & (overall < walk_max_kmh)).then(pl.lit("walk"))
+            .when((p85 < bike_p85_kmh) & (vmax < bike_max_kmh) & (overall < bike_max_kmh)).then(pl.lit("bike"))
             .otherwise(pl.lit("motorized")).alias("mode_guess"))
     return trajectories.with_columns(expr)
 
@@ -229,6 +234,7 @@ def build_trajectories(rows: pl.DataFrame | pl.LazyFrame, stops: pl.DataFrame | 
     """
     tp = params or TrajectoryParams()
     gap = float(tp.max_time_gap)
+    cap_ms = float(tp.max_speed_kmh) / 3600.0          # m per ms
     st = stops.lazy().select(_STOP_COLS).unique(subset=["uid", "stop_event"]).sort("start_timestamp")
     prev = st.select("uid", *[pl.col(c).alias(f"_p_{c}") for c in _STOP_COLS[1:]])
     nxt = st.select("uid", *[pl.col(c).alias(f"_n_{c}") for c in _STOP_COLS[1:]])
@@ -240,9 +246,16 @@ def build_trajectories(rows: pl.DataFrame | pl.LazyFrame, stops: pl.DataFrame | 
         .filter(pl.col("_p_end_timestamp").is_null() | (pl.col("_ts") > pl.col("_p_end_timestamp")))
         .sort("uid", "timestamp", "latitude", "longitude")
         .with_columns(
+            # GPS jump: faster than max_speed_kmh from the previous moving ping (same-second
+            # pings count as one second apart). Jumps split trajectories like long gaps do.
+            (haversine(pl.col("latitude").shift(1), pl.col("longitude").shift(1), "latitude", "longitude")
+             > cap_ms * pl.max_horizontal(pl.col("timestamp") - pl.col("timestamp").shift(1), 1000)
+             ).fill_null(False).alias("_jump"))
+        .with_columns(
             ((pl.col("uid") != pl.col("uid").shift(1)).fill_null(True)
              | pl.col("_p_stop_event").ne_missing(pl.col("_p_stop_event").shift(1))
              | ((pl.col("timestamp") - pl.col("timestamp").shift(1)) > gap * 1000).fill_null(False)
+             | pl.col("_jump")
              ).cast(pl.Int64).cum_sum().alias("_seg")
         )
     )
@@ -254,14 +267,27 @@ def build_trajectories(rows: pl.DataFrame | pl.LazyFrame, stops: pl.DataFrame | 
         moving.lazy().group_by("_seg").agg(
             pl.col("uid").first(), pl.col("^_p_.*$").first(),
             pl.col("_ts").min().alias("_t0"), pl.col("_ts").max().alias("_t1"),
+            pl.col("latitude").first().alias("_la0"), pl.col("longitude").first().alias("_lo0"),
+            pl.col("latitude").last().alias("_la1"), pl.col("longitude").last().alias("_lo1"),
             pl.len().alias("n_pings"),
         )
+        # pieces between the same two stays (split by jumps): only the first may connect to the
+        # origin stay and only the last to the destination stay
+        .sort("uid", "_t0", "_seg")
+        .with_columns(pl.col("_t0").rank("ordinal").over("uid", "_p_stop_event").alias("_piece"),
+                      pl.len().over("uid", "_p_stop_event").alias("_npieces"))
         .sort("_t1")
         .join_asof(nxt, left_on="_t1", right_on="_n_start_timestamp", by="uid", strategy="forward",
                    check_sortedness=False)
         .with_columns(
-            (pl.col("_p_end_timestamp").is_not_null() & ((pl.col("_t0") - pl.col("_p_end_timestamp")) <= gap)).alias("_o"),
-            (pl.col("_n_start_timestamp").is_not_null() & ((pl.col("_n_start_timestamp") - pl.col("_t1")) <= gap)).alias("_d"),
+            (pl.col("_p_end_timestamp").is_not_null() & ((pl.col("_t0") - pl.col("_p_end_timestamp")) <= gap)
+             & (pl.col("_piece") == 1)
+             & (haversine("_p_stop_latitude", "_p_stop_longitude", "_la0", "_lo0")
+                <= cap_ms * 1000 * pl.max_horizontal(pl.col("_t0") - pl.col("_p_end_timestamp"), 1))).alias("_o"),
+            (pl.col("_n_start_timestamp").is_not_null() & ((pl.col("_n_start_timestamp") - pl.col("_t1")) <= gap)
+             & (pl.col("_piece") == pl.col("_npieces"))
+             & (haversine("_la1", "_lo1", "_n_stop_latitude", "_n_stop_longitude")
+                <= cap_ms * 1000 * pl.max_horizontal(pl.col("_n_start_timestamp") - pl.col("_t1"), 1))).alias("_d"),
         )
         .with_columns(
             pl.when("_o").then(pl.col("_p_stop_event")).alias("origin_stop_event"),

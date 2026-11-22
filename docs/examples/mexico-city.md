@@ -2,43 +2,137 @@
 
 A full month of location data for Mexico City: **1.66 billion pings from 1.58 million
 devices**, December 2022 (the `filtered_localized` quadrant dataset, 22 GB of parquet in 32
-daily partitions). The run uses the gc-lbs MX configuration.
+daily partitions). The runs use the gc-lbs MX configuration. Maps are clipped to the official
+boundary of Ciudad de México (INEGI Marco Geoestadístico, `CVE_ENT = 09`).
+
+!!! note "Coverage"
+    The quadrant dataset is a bounding box that ends at 19.198° N. The southern rural part of
+    the city (most of Tlalpan, Milpa Alta and Xochimilco) is outside it, so the south of every
+    map is empty for lack of data, not because of the clipping.
+
+## Step 1: remove coordinate sinks
+
+Two-thirds of the devices have pings snapped to a handful of exact points: the city's default
+geocode at the Zócalo (292k devices on 19.4326, -99.1332, plus a jitter grid around it), cell
+towers and Wi-Fi positioning points. These pings create fake stays and homes and pull real
+trips into straight lines toward those points. They are found and dropped first
+([details](../guide/spatial.md#data-quality-coordinate-sinks)):
 
 ```python
 import polaroam as pr
 
-cfg = pr.PipelineConfig.from_json("pipeline_config.json", "MX", n_shards=24)
+sinks = pr.find_sinks("/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet", min_devices=5000)
+sinks.write_parquet("mx_sinks.parquet")          # 2,586 coordinates; 104 s
+```
+
+| Sinks (≥ 5,000 devices per exact coordinate) | |
+|---|---|
+| coordinates | 2,586 |
+| pings dropped | 263,698,461 (15.9%) |
+| devices with at least one dropped ping | 1,036,478 |
+
+## Step 2: the pipeline
+
+```python
+cfg = pr.PipelineConfig.from_json(
+    "pipeline_config.json", "MX", n_shards=24,
+    trajectories=pr.TrajectoryParams(min_pings=2, min_length_m=100),
+    drop_coordinates="mx_sinks.parquet",
+)
 pipe = pr.Pipeline("/data/out/MX_2022_12", cfg, trajectories=True, use_cuda=True)
 pipe.run("/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet")
 ```
 
-| Output | Rows |
-|---|---|
-| stays | 22,391,432 |
-| trajectories | 21,029,009 |
-| devices with a home | 370,200 |
-| devices with a work place | 58,766 |
+13.2 minutes on one RTX 3090, with a peak of 22.3 GB of RAM.
+
+| Output | Without sinks | With sinks (gc-lbs behavior) |
+|---|---|---|
+| stays | 19,847,489 | 22,391,432 |
+| trajectories (≥ 2 pings, ≥ 100 m) | 13,504,251 | 14,307,433 |
+| devices with a home | 339,793 | 370,200 |
+| devices with a work place | 53,885 | 58,766 |
 
 ## Stays, homes and work places
 
-Counts per ~150 m cell, log scale. The quadrant dataset is clipped to the city's boundary:
+Counts per ~150 m cell, log scale:
 
 ![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_light.png#only-light)
 ![Stays, homes and work places in Mexico City](../assets/figures/cdmx_stays_dark.png#only-dark)
 
-Homes cover the whole residential city. Work places concentrate along the central corridors.
-With one month of data (7 / 4 day thresholds), one device in four with a home also has a work
-place.
+## Homes and work places on H3
 
-## The city drawn by its trajectories
+Fine-grained, k-anonymous heat maps with [H3](../guide/spatial.md): cells with fewer than 5
+devices are hidden.
 
-Every vertex of the 21M simplified trajectories (103M points), as a density raster. The road
-network appears from movement alone:
+```python
+cells = pipe.locations_h3(resolution=10)          # or pr.home_work_h3(locations, 10)
+```
+
+![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_light.png#only-light)
+![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_dark.png#only-dark)
+
+Homes cover the residential city at block level (res 10, ~76 m). Work places concentrate in
+the center and along the main corridors. The jobs-vs-residents panel shows the job-rich center
+against the residential periphery. With one month of data (7 / 4 day thresholds), about one
+device in six with a home also has a work place.
+
+## Trajectories
+
+Every trajectory, rasterized at ~50 m: each pixel counts the trajectories passing through it.
 
 ![Trajectory density in Mexico City](../assets/figures/cdmx_flows_light.png#only-light){ width="640" }
 ![Trajectory density in Mexico City](../assets/figures/cdmx_flows_dark.png#only-dark){ width="640" }
 
+### By mode
+
+The same, split by the baseline `mode_guess`:
+
+![Trajectories by mode in Mexico City](../assets/figures/cdmx_mode_maps_light.png#only-light)
+![Trajectories by mode in Mexico City](../assets/figures/cdmx_mode_maps_dark.png#only-dark)
+
+- **Motorized** trips trace the road hierarchy: Periférico, Circuito Interior, Calzada de
+  Tlalpan, Viaducto.
+- **Bike** trips are densest in the center.
+- **Walk** trips are local and diffuse.
+
+| Mode | Trajectories | Median p85 | Median length |
+|---|---|---|---|
+| motorized | 5,825,143 | 40.7 km/h | 4.5 km |
+| unknown | 4,587,279 | | 0.5 km |
+| bike | 1,588,679 | 13.1 km/h | 1.5 km |
+| walk | 1,503,150 | 1.3 km/h | 0.3 km |
+
+![Speed features by mode, Mexico City](../assets/figures/cdmx_modes_light.png#only-light)
+![Speed features by mode, Mexico City](../assets/figures/cdmx_modes_dark.png#only-dark)
+
+!!! warning "Reading the mode baseline"
+    - **Motorized** and **bike** have plausible cruising speeds and lengths.
+    - **`walk`** has a median p85 of 1.3 km/h, below real walking: much of it is slow movement
+      or drift near places.
+    - **The longest motorized trips** (100+ km) are real: 4–8-hour drives at ~24 km/h, with no
+      jumps, all over the city. These are the signature of taxi, ride-hailing and delivery
+      drivers who never stop for the 5 minutes a stay needs.
+
+    `mode_guess` is a baseline and a feature set, not ground truth. See [Speed and transport
+    mode](../guide/speed-and-mode.md).
+
+## How trajectories were fixed along the way
+
+Two artifacts were found in this data and fixed in the library:
+
+1. **Ping-pong between the true position and a fallback point, within minutes.** It produced
+   103k "walks" longer than 100 km: median 3.4 minutes, 18 jumps each, straightness ≈ 0. GPS
+   jumps (faster than `max_speed_kmh`) now split trajectories like long gaps do.
+2. **Snapping to sink points at plausible speeds.** This drew straight spokes toward the sinks
+   in the walk and bike maps. It is fixed at the source with `find_sinks` and
+   `drop_coordinates`.
+
+After both fixes, the longest walk is 34 km (it was 76,000 km), with a p99 of 6.7 km.
+
 ## Three ways, one answer
+
+The same month was also processed all at once on CPU and GPU, and day by day, before the
+trajectory speed features existed (sinks kept):
 
 | Run | Wall time | Peak RAM | Peak GPU memory |
 |---|---|---|---|
@@ -46,7 +140,7 @@ network appears from movement alone:
 | One-shot, GPU (RTX 3090) | **15.9 min** | 22.1 GB | 13.1 GB |
 | 32 daily batches + `finalize` (CPU) | 40.5 min | **3.4 GB** | |
 
-All three produce **identical** tables (stays, trajectories, clusters, home/work, locations),
+All three produced **identical** tables (stays, trajectories, clusters, home/work, locations),
 compared exactly, row by row.
 
 ```python
@@ -59,71 +153,12 @@ for d in sorted(glob.glob("/data/Berkeley/MX/data_quadrant/filtered_localized/da
 pipe.finalize()
 ```
 
-Day by day, each batch processes one day of pings (~52M) plus the carried state. The days
-run in 40–100 s each on the CPU, growing as more stays accumulate in the DBSCAN state.
-
-The three runs above were made before the trajectory speed features were added (they include
-every micro-trajectory: 21.0M trajectories). A rerun with the current version, the speed
-features and `min_pings=2, min_length_m=100` gave the same 22.4M stays and **11.2M
-trajectories** in 18.9 min on the GPU (peak RAM 24.7 GB).
-
-## Speed and mode at scale
-
-```python
-cfg = pr.PipelineConfig.from_json("pipeline_config.json", "MX", n_shards=24,
-                                  trajectories=pr.TrajectoryParams(min_pings=2, min_length_m=100))
-```
-
-| Mode | Trajectories | Median p85 | Median length |
-|---|---|---|---|
-| motorized | 5,246,347 | 40.7 km/h | 8.5 km |
-| unknown | 2,642,458 | 2.8 km/h | 2.6 km |
-| walk | 2,112,460 | 0.9 km/h | 2.6 km |
-| bike | 1,231,102 | 13.8 km/h | 2.0 km |
-
-![Speed features by mode, Mexico City](../assets/figures/cdmx_modes_light.png#only-light)
-![Speed features by mode, Mexico City](../assets/figures/cdmx_modes_dark.png#only-dark)
-
-!!! warning "What the baseline gets wrong here"
-    - **Motorized** and **bike** look plausible: cruising speeds of 41 and 14 km/h, trips of
-      8.5 and 2.0 km.
-    - **`walk` is mostly not walking.** It has a median p85 of 0.9 km/h over 2.6 km: slow
-      drift and sparse sampling.
-    - **A single fast window** (still under the 250 km/h jump cap) sends some otherwise-slow
-      noisy trips to `motorized`: the small bump at p85 ≈ 1 km/h.
-
-    Use `mode_guess` as a baseline and a feature set, not as ground truth. Filter on
-    `ping_gap_median_s`, `straightness` and `n_jumps`, lower `max_speed_kmh` for a city, or
-    train a model on labeled trips. See [Speed and transport mode](../guide/speed-and-mode.md).
-
-## Homes and work places on H3
-
-Fine-grained heat maps with [H3](../guide/spatial.md), k-anonymous (cells with fewer than 5
-devices hidden):
-
-```python
-cells = pipe.locations_h3(resolution=10)          # or pr.home_work_h3(locations, 10)
-```
-
-![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_light.png#only-light)
-![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3_dark.png#only-dark)
-
-![Roma, Condesa and Juárez at block level](../assets/figures/cdmx_h3_zoom_light.png#only-light)
-![Roma, Condesa and Juárez at block level](../assets/figures/cdmx_h3_zoom_dark.png#only-dark)
-
-!!! danger "18% of homes sit on coordinate sinks"
-    - **2,592 devices** had their home at exactly 19.4326, -99.1332, the Zócalo: the city's
-      default geocode.
-    - Five other single points held 1,000–1,500 homes each.
-    - **65,963 homes (18%)** sit on exact coordinates shared by 50 or more devices.
-
-    The maps above exclude them. Find and remove them with `pr.coordinate_sinks` and
-    `pr.drop_sinks`, ideally on the pings *before* stay detection
-    ([details](../guide/spatial.md#data-quality-coordinate-sinks)).
-
 ## Reproduce the figures
 
 ```bash
-python examples/mexico_city_figures.py /data/out/MX_2022_12            # maps and H3
+python examples/mexico_city_figures.py /data/out/MX_2022_12            # maps, H3, trajectories by mode
 python examples/mexico_city_figures.py /data/out/MX_2022_12 --modes    # speed / mode figure
 ```
+
+The city boundary used for clipping is `examples/data/cdmx_boundary.geojson` (INEGI, simplified
+to ~5 m).

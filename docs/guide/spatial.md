@@ -28,15 +28,15 @@ with fewer than `min_count` devices (default 5) are dropped.** In `home_work_h3`
 `min_count` is set to null, and the cell is dropped when both counts are null.
 `min_count=1` disables the protection, for internal use only.
 
-How much survives depends on resolution and density. In one month of Mexico City (370k homes,
-58.8k work places), with k = 5:
+How much survives depends on resolution and density. In one month of Mexico City (302k homes
+and 53.9k work places after removing coordinate sinks), with k = 5:
 
 | H3 res | Hexagon edge | Homes kept | Workers kept |
 |---|---|---|---|
 | 8 | ~531 m | 100% | 100% |
-| 9 | ~201 m | 100% | 92% |
-| 10 | ~76 m | 92% | 44% |
-| 11 | ~29 m | 66% | 23% |
+| 9 | ~201 m | 100% | 91% |
+| 10 | ~76 m | 90% | 40% |
+| 11 | ~29 m | 58% | 18% |
 
 Homes support block-level maps (res 10–11). Work places, which are fewer, are best at res 9.
 
@@ -49,32 +49,52 @@ the city totals: red cells have more jobs than residents relative to the city, b
 opposite. A coarse resolution keeps both counts above k everywhere. At finer resolutions,
 requiring ≥ k workers would select only job-dense cells and bias the map red.
 
-![Roma, Condesa and Juárez at block level](../assets/figures/cdmx_h3_zoom_light.png#only-light)
-![Roma, Condesa and Juárez at block level](../assets/figures/cdmx_h3_zoom_dark.png#only-dark)
-
 ## Data quality: coordinate sinks
 
-Some coordinates are shared by thousands of unrelated devices. These are default geocodes
-(e.g. a city centroid used when only the IP is known), cell towers, or Wi-Fi positioning
-points. Stays and homes detected there are artifacts, and they dominate fine-grained maps.
+Some exact coordinates are shared by thousands of unrelated devices: a city's default geocode
+(used when only the IP or the cell is known), cell towers, Wi-Fi positioning points. Pings
+snapped there create fake stays and homes, and they pull real trips into straight "spokes"
+toward those points. No speed test catches them: a snap to a point 5 km away ten minutes later
+looks like 30 km/h.
+
+**Find them and drop those pings before anything else:**
+
+=== "Python"
+
+    ```python
+    sinks = pr.find_sinks("raw/MX/**/*.parquet", min_devices=5000)    # two streaming passes
+    sinks.write_parquet("mx_sinks.parquet")
+
+    cfg = pr.PipelineConfig(timezone="America/Mexico_City", drop_coordinates="mx_sinks.parquet")
+    ```
+
+=== "Command line"
+
+    ```bash
+    polaroam sinks "raw/MX/**/*.parquet" mx_sinks.parquet --min-devices 5000
+    polaroam run "raw/MX/**/*.parquet" out/MX --drop-coordinates mx_sinks.parquet ...
+    ```
+
+`drop_coordinates` is opt-in: it deliberately departs from gc-lbs, which keeps every ping. The
+list is fixed for an output directory, so incremental runs stay consistent.
+
+!!! tip "Choosing `min_devices`"
+    Coordinates are often rounded to ~1 m. Over a month with ~1.6M devices, real busy places
+    (metro stations, malls) collect hundreds or thousands of devices on the same rounded
+    point, so a low threshold removes real data. In Mexico City:
+
+    - **≥ 50 devices** matched 270k coordinates and 61% of all pings, far too aggressive.
+    - **≥ 5,000** (2,586 coordinates) captured the snapping points: the Zócalo default geocode
+      (292k devices on 19.4326, -99.1332, plus a jitter grid of ~143k-device neighbors) and the
+      centers of the trajectory spokes (6.5k–17k devices each).
+
+    Inspect `find_sinks(..., min_devices=50)` sorted by `devices` and pick the threshold where
+    your known artifacts start.
+
+For already computed tables, `coordinate_sinks` / `drop_sinks` work on any coordinates, e.g.
+homes:
 
 ```python
 sinks = pr.coordinate_sinks(pipe.locations(), "home_latitude", "home_longitude", min_devices=50)
 clean = pr.drop_sinks(pipe.locations(), sinks, "home_latitude", "home_longitude")
 ```
-
-In one month of Mexico City:
-
-- **2,592 devices** had their "home" at exactly 19.4326, -99.1332: the Zócalo, the textbook
-  centroid of the city.
-- Five more single points held 1,000–1,500 homes each.
-- Overall, **65,963 homes (18%)** sit on exact coordinates shared by 50 or more devices.
-
-At ~1 m coordinate precision, that many devices on the same point means snapped locations,
-not tall buildings. The maps above exclude them.
-
-!!! warning "Sinks affect stays, not only maps"
-    A device whose pings snap to a tower or a default point can get a stay, and a home, there.
-    `coordinate_sinks` and `drop_sinks` also work on pings (`latitude` / `longitude`). Filtering
-    pings at sink coordinates *before* stay detection removes these artifacts at the source;
-    choose `min_devices` for your data (more devices, more legitimate sharing).

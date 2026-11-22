@@ -61,13 +61,14 @@ class TrajectoryParams:
         the first/last moving ping for the stop to be used as origin/destination.
     simplify_tolerance: Douglas-Peucker tolerance (m). ``0`` keeps every ping (full resolution).
     min_pings: minimum number of moving pings in a trajectory (e.g. 2 drops single-ping "trips").
-    min_length_m: minimum path length (m) of a trajectory (e.g. 100 drops GPS jitter around stays).
+    min_length_m: minimum path length (m) of a trajectory (drops GPS jitter around stays; 0 keeps all).
     speed_window: speeds are measured over windows of at least this many seconds (GPS error
         dominates the speed of pings only a few seconds apart).
     speed_max_gap: gaps between pings longer than this (s) are not used for speeds: a speed
         averaged over a long gap mixes moving and waiting (often the time between leaving a
         stay and the first moving ping).
-    max_speed_kmh: steps faster than this are GPS jumps: excluded from speeds and counted in ``n_jumps``.
+    max_speed_kmh: steps faster than this are GPS jumps: they split trajectories (like gaps longer
+        than ``max_time_gap``) and are excluded from speeds.
     slow_speed_kmh: speed below which time counts as slow (``frac_slow``; ~walking).
     wkt_measure: write ``geometry`` as ``LINESTRING M`` with the Unix time (s) as measure.
     """
@@ -75,7 +76,7 @@ class TrajectoryParams:
     max_time_gap: float = 1800
     simplify_tolerance: float = 30
     min_pings: int = 1
-    min_length_m: float = 0
+    min_length_m: float = 100
     speed_window: float = 30
     speed_max_gap: float = 300
     max_speed_kmh: float = 250
@@ -95,6 +96,7 @@ class PipelineConfig:
     trajectories: TrajectoryParams = field(default_factory=TrajectoryParams)
     column_map: dict[str, str] = field(default_factory=dict)
     n_shards: int = 1
+    drop_coordinates: str | None = None
 
     @classmethod
     def from_json(cls, path: str | Path, label: str | None = None, **overrides: Any) -> PipelineConfig:
@@ -112,7 +114,7 @@ class PipelineConfig:
         }
         if "timezone" in section:
             kw["timezone"] = section["timezone"]
-        for key in ("tz_polygons", "column_map", "n_shards"):
+        for key in ("tz_polygons", "column_map", "n_shards", "drop_coordinates"):
             if key in section:
                 kw[key] = section[key]
         if "shards" in section.get("stops", {}):

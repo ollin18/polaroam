@@ -6,6 +6,7 @@ Installing the package provides a `polaroam` command (also `python -m polaroam.c
 polaroam run      INPUT OUTPUT [options]     # everything at once
 polaroam update   INPUT OUTPUT [options]     # one incremental batch (e.g. a day)
 polaroam finalize OUTPUT                     # close open stays after the last batch
+polaroam sinks    INPUT SINKS.parquet        # find coordinate sinks (default geocodes, towers)
 polaroam trajectories PINGS STOPS OUT.parquet [options]
 ```
 
@@ -37,6 +38,8 @@ polaroam trajectories "raw/MX/**/*.parquet" "out/MX/stops/**/*.parquet" trips.pa
 | `--timezone TZ` | run, update | fixed (or fallback) timezone |
 | `--tz-polygons CSV` | run, update | `tz,geometry` CSV for per-stay timezones |
 | `--shards N` | run, update | split devices into N groups |
+| `--drop-coordinates FILE` | run, update | drop pings at these coordinates (sinks) before anything else |
+| `--min-devices N` | sinks | devices sharing an exact coordinate to call it a sink (default 5000) |
 | `--col std=yours` | run, update | column mapping, repeatable (`--col uid=aid`) |
 | `--distance`, `--time`, `--min-duration` | run, update | stay parameters (m, s, s) |
 | `--dbscan-dist`, `--min-points` | run, update | DBSCAN parameters |

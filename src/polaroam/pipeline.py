@@ -107,6 +107,11 @@ class Pipeline:
             return BatchSummary(batch_id, 0, 0, 0.0)
 
         lf = read_pings(pings, column_map or cfg.column_map)
+        if cfg.drop_coordinates:
+            # coordinate sinks (default geocodes, towers): drop those pings before anything else
+            drop = pl.scan_parquet(cfg.drop_coordinates).select(
+                pl.col("latitude").cast(pl.Float64), pl.col("longitude").cast(pl.Float64))
+            lf = lf.join(drop, on=["latitude", "longitude"], how="anti")
         split = self._split(lf, batch_id) if cfg.n_shards > 1 else None
         n_stops = n_traj = 0
         for k in range(cfg.n_shards):
@@ -259,4 +264,5 @@ def _config_from_dict(d: dict) -> PipelineConfig:
         stops=StopParams(**d["stops"]), dbscan=ClusterParams(**d["dbscan"]),
         home_work=HomeWorkParams(**d["home_work"]), trajectories=TrajectoryParams(**d["trajectories"]),
         column_map=d.get("column_map", {}), n_shards=d.get("n_shards", 1),
+        drop_coordinates=d.get("drop_coordinates"),
     )

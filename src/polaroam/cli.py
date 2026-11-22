@@ -19,6 +19,7 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
     if a.config:
         cfg = PipelineConfig.from_json(a.config, a.label)
     elif any(v is not None for v in (a.timezone, a.tz_polygons, a.shards, a.distance, a.time, a.min_duration,
+                                     a.drop_coordinates,
                                      a.dbscan_dist, a.min_points, *_traj_args(a).values())) or a.col:
         cfg = PipelineConfig()
     else:
@@ -30,6 +31,8 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
         over["tz_polygons"] = a.tz_polygons
     if a.shards:
         over["n_shards"] = a.shards
+    if a.drop_coordinates:
+        over["drop_coordinates"] = a.drop_coordinates
     if a.col:
         over["column_map"] = dict(c.split("=", 1) for c in a.col)
     stops = {k: v for k, v in (("distance_threshold", a.distance), ("time_threshold", a.time),
@@ -74,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--timezone", help="fixed (or fallback) timezone, e.g. America/Bogota")
         p.add_argument("--tz-polygons", help="CSV with tz,geometry(WKT) columns for per-stop timezones")
         p.add_argument("--shards", type=int, help="split devices into N groups (bounded memory)")
+        p.add_argument("--drop-coordinates", help="parquet of latitude,longitude to drop (coordinate sinks)")
         p.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
         p.add_argument("--distance", type=float, help="stop distance threshold (m)")
         p.add_argument("--time", type=float, help="stop time threshold (s)")
@@ -97,10 +101,23 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("out")
     t.add_argument("--cuda", action="store_true")
     _add_traj_args(t)
+    k = sub.add_parser("sinks", help="find coordinate sinks (default geocodes, towers) in pings")
+    k.add_argument("pings")
+    k.add_argument("out", help="parquet to write (latitude, longitude, devices)")
+    k.add_argument("--min-devices", type=int, default=5000)
+    k.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
     a = ap.parse_args(argv)
 
     from .pipeline import Pipeline
 
+    if a.cmd == "sinks":
+        from .quality import find_sinks
+
+        cm = dict(c.split("=", 1) for c in a.col) if a.col else None
+        s = find_sinks(a.pings, a.min_devices, column_map=cm)
+        s.write_parquet(a.out)
+        print(f"{s.height:,} sink coordinates -> {a.out}")
+        return 0
     if a.cmd == "run":
         pipe = Pipeline(a.output, _config(a), trajectories=a.trajectories, use_cuda=a.cuda)
         s = pipe.run(a.input, overwrite=a.overwrite)

@@ -20,7 +20,7 @@ from .home_work import classify_home_work, home_work_clusters, home_work_locatio
 from .io import read_pings, shard_expr
 from .local_time import add_local_time
 from .pipeline import Pipeline
-from .quality import coordinate_sinks, drop_sinks
+from .quality import coordinate_sinks, drop_sinks, find_sinks
 from .stops import StopDetector, StopState, detect_stops
 from .trajectories import build_trajectories, douglas_peucker, extract_trajectories, guess_mode, speed_features
 
@@ -50,6 +50,7 @@ __all__ = [
     "douglas_peucker",
     "drop_sinks",
     "extract_trajectories",
+    "find_sinks",
     "guess_mode",
     "h3_cells",
     "h3_counts",
