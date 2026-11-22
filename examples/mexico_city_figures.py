@@ -196,7 +196,7 @@ def hexes(cells: pl.DataFrame):
 
 def count_ticks(cb, vmin, vmax):
     """Plain round-number ticks on a log colorbar."""
-    ticks = [v for v in (5, 10, 20, 50, 100, 200, 500, 1000) if vmin <= v <= vmax]
+    ticks = [v for v in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000) if vmin <= v <= vmax]
     cb.set_ticks(ticks, labels=[str(v) for v in ticks])
     cb.minorticks_off()
 
@@ -239,7 +239,7 @@ def clean_locations(loc, min_devices=50):
     return out, int(hs["devices"].sum()), int(ws["devices"].sum())
 
 
-def fig_h3(loc, t, path, k=5):
+def fig_h3(loc, t, path, k=1):
     seq = hot_cmap()
     div = LinearSegmentedColormap.from_list(
         "div", ["#3987e5", "#86b6ef", "#f0efec" if t is THEMES["light"] else "#4a4a46", "#ec835a", "#e34948"])
@@ -247,7 +247,8 @@ def fig_h3(loc, t, path, k=5):
     h10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("homes")
     w10 = pr.home_work_h3(loc, 10, min_count=k, geometry=False).drop_nulls("workers")
     n_h, n_w = loc["home_latitude"].is_not_null().sum(), loc["work_latitude"].is_not_null().sum()
-    b8 = pr.home_work_h3(loc, 8, min_count=k, geometry=False).drop_nulls(["homes", "workers"])
+    # ratios of tiny counts are noise: compare cells with at least 5 homes and 5 workers
+    b8 = pr.home_work_h3(loc, 8, min_count=5, geometry=False).drop_nulls(["homes", "workers"])
     H, W = b8["homes"].sum(), b8["workers"].sum()
     bal = np.log2((b8["workers"].to_numpy() / W) / (b8["homes"].to_numpy() / H))
 
@@ -274,7 +275,8 @@ def fig_h3(loc, t, path, k=5):
             count_ticks(cb, norm.vmin, norm.vmax)
     fig.suptitle("Where Mexico City lives and works", x=0.008, y=0.985, ha="left", fontsize=13, fontweight="bold",
                  color=t["ink"])
-    fig.text(0.008, 0.935, f"Cells with fewer than {k} devices are hidden. Homes / work places on coordinate sinks "
+    hidden = f"Cells with fewer than {k} devices are hidden. " if k > 1 else ""
+    fig.text(0.008, 0.935, f"{hidden}Homes / work places on coordinate sinks "
              f"(exact points shared by 50+ devices: {nh:,} homes, {nw:,} work places) are excluded.",
              fontsize=9, color=t["ink2"])
     fig.text(0.008, 0.008, ATTRIBUTION, fontsize=7, color=t["muted"])

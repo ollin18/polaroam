@@ -21,15 +21,13 @@ gdf = gpd.GeoDataFrame(cells.to_pandas(), geometry=gpd.GeoSeries.from_wkt(cells[
                        crs="EPSG:4326")
 ```
 
-## k-anonymity
+## Suppressing small cells (optional)
 
-Fine resolutions isolate individuals: at resolution 10 a cell can hold a single home. **Cells
-with fewer than `min_count` devices (default 5) are dropped.** In `home_work_h3`, a count below
-`min_count` is set to null, and the cell is dropped when both counts are null.
-`min_count=1` disables the protection, for internal use only.
-
-How much survives depends on resolution and density. In one month of Mexico City (302k homes
-and 53.9k work places after removing coordinate sinks), with k = 5:
+`home_work_h3` and `h3_counts` drop cells with fewer than `min_count` devices, 5 by default. This
+is a guard for publishing fine-grained counts of very sparse data. Pass `min_count=1` to keep
+every cell; the Mexico City maps below do, since they show only per-hexagon counts with no
+identifiers. At k = 5, the share of devices that would survive in one month of Mexico City (302k
+homes, 53.9k work places):
 
 | H3 res | Hexagon edge | Homes kept | Workers kept |
 |---|---|---|---|
@@ -38,12 +36,10 @@ and 53.9k work places after removing coordinate sinks), with k = 5:
 | 10 | ~76 m | 90% | 40% |
 | 11 | ~29 m | 58% | 18% |
 
-Homes support block-level maps (res 10–11). Work places are far fewer: at res 10 the map keeps
-only the densest job areas (40% of workers), and res 9 shows 91%.
-
 ![Homes, work places and jobs vs residents in Mexico City](../assets/figures/cdmx_h3.png)
 
-The right panel compares jobs with residents per res-8 cell. It plots
+The right panel compares jobs with residents per res-8 cell, only where both counts are at
+least 5 (ratios of tiny counts are noise). It plots
 \(\log_2\big((\text{workers}_c / W) / (\text{homes}_c / H)\big)\), where \(W\) and \(H\) are
 the city totals: red cells have more jobs than residents relative to the city, blue cells the
 opposite. A coarse resolution keeps both counts above k everywhere. At finer resolutions,

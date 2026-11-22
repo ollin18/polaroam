@@ -60,8 +60,8 @@ Counts per ~150 m cell, log scale:
 
 ## Homes and work places on H3
 
-Fine-grained, k-anonymous heat maps with [H3](../guide/spatial.md): cells with fewer than 5
-devices are hidden.
+Fine-grained heat maps with [H3](../guide/spatial.md): counts of homes and work places per
+hexagon, with no identifiers, so every cell is shown (`min_count=1`).
 
 ```python
 cells = pipe.locations_h3(resolution=10)          # or pr.home_work_h3(locations, 10)
@@ -69,13 +69,13 @@ cells = pipe.locations_h3(resolution=10)          # or pr.home_work_h3(locations
 
 ![Homes, work places and jobs vs residents on H3](../assets/figures/cdmx_h3.png)
 
-Homes and work places are both at block level (res 10, ~76 m), and each panel title says
-what share of devices is shown. Homes cover the residential city (90% shown). Work places are
-far fewer: at res 10 only 40% fall in cells with at least 5 workers, so the map keeps the
-densest job areas. Use res 9 (91% shown) for a fuller picture. The jobs-vs-residents panel
-stays at res 8, where both counts clear k everywhere. It shows the job-rich center against the
-residential periphery. With one month of data (7 / 4 day thresholds), about one device in six
-with a home also has a work place. Click any figure to enlarge it.
+Homes and work places are both at block level (res 10, ~76 m). Homes cover the residential
+city; work places concentrate in the center and along the main corridors. The jobs-vs-residents
+panel (res 8) compares only cells with at least 5 homes and 5 work places: that is for
+statistical stability (a ratio of 2 workers to 1 home is noise), not privacy. It shows the
+job-rich center against the residential periphery. With one month of data (7 / 4 day
+thresholds), about one device in six with a home also has a work place. Click any figure to
+enlarge it.
 
 ## Trajectories
 

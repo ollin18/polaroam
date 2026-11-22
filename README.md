@@ -16,7 +16,7 @@ PolaRoam turns raw location pings (LBS / GPS) into:
 - **stays**;
 - **trajectories with speeds and transport mode**;
 - recurrent **places**;
-- **home / work** locations, with k-anonymous **H3 heat maps**.
+- **home / work** locations, with **H3 heat maps**.
 
 It uses pure, vectorized [Polars](https://pola.rs): no per-device Python loops. It runs all at
 once or day by day, on CPU or CUDA, and follows the logic of the gc-lbs BigQuery pipeline.
