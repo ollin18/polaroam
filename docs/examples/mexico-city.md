@@ -61,13 +61,19 @@ pixel, histogram-equalised colors) and clipped to the city boundary:
 
 ## Homes and work places
 
-The home and work location of every device that has one (`pipe.locations()`), same rendering.
-Homes on coordinate sinks are excluded.
+The home and work location of every device that has one (`pipe.locations()`), same rendering
+on ~190 m pixels. Homes on coordinate sinks are excluded. Work places are sparse (54k over the
+city): at finer pixels 80% of them would hold just 1 or 2 points, and histogram equalisation, which
+colors pixels by the *rank* of their count, would collapse to two colors.
 
 ![Homes and work places in Mexico City](../assets/figures/cdmx_home_work.png)
 
-Homes cover the residential city; work places concentrate in the center and along the main
-corridors. With one month of data (7 / 4 day thresholds), about one device in six with a home
+Homes cover the residential city; work places concentrate in the central core (Cuauhtémoc,
+Benito Juárez, Miguel Hidalgo) and fade outward. The concentration is weaker than in
+employment statistics: December is a short work month (holidays), the sample is app users'
+pings, and much of the city's work is local and dispersed. Work detection uses the gc-lbs MX
+thresholds (4 workdays, ≥ 50 m from home); stricter ones (8 days and 1 km, or 10 days and 2 km)
+keep fewer work places but give the same geography. With one month of data (7 / 4 day thresholds), about one device in six with a home
 also has a work place. For per-hexagon counts you can join with other data, see [Heat maps
 with H3](../guide/spatial.md). Click any figure to enlarge it.
 

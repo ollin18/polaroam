@@ -157,9 +157,9 @@ def ds_image(lon, lat, cmap, width=900, spread=0):
     return np.asarray(img.to_pil()), (lon0, lon1, lat0, lat1)
 
 
-def ds_panel(ax, img, ext, title, subtitle=""):
+def ds_panel(ax, img, ext, title, subtitle="", interpolation="auto"):
     """A datashader map on a white page: dark panel, true proportions, city outline."""
-    ax.imshow(img, extent=ext, origin="upper", interpolation="auto",
+    ax.imshow(img, extent=ext, origin="upper", interpolation=interpolation,
               aspect=1 / np.cos(np.radians((ext[2] + ext[3]) / 2)))
     b = boundary()
     for poly in getattr(b, "geoms", [b]):
@@ -195,13 +195,15 @@ def fig_ds_home_work(loc, path):
     h = loc.drop_nulls("home_latitude")
     w = loc.drop_nulls("work_latitude")
     fig, axes = plt.subplots(1, 2, figsize=(15, 9.5))
+    # ~190 m pixels for both: work places are sparse (54k over the city), and at finer pixels
+    # 80% of pixels hold 1-2 points, so histogram equalisation collapses to two colors
     panels = [(h, "home_latitude", "home_longitude", f"Homes: {h.height:,}",
-               f"homes on coordinate sinks excluded ({nh:,})"),
+               f"~190 m pixels · homes on coordinate sinks excluded ({nh:,})"),
               (w, "work_latitude", "work_longitude", f"Work places: {w.height:,}",
-               "datashader, histogram-equalised")]
+               "~190 m pixels · datashader, histogram-equalised")]
     for ax, (d, la, lo, title, sub_) in zip(axes, panels):
-        img, ext = ds_image(d[lo], d[la], inferno_list(), width=700, spread=1)
-        ds_panel(ax, img, ext, title, sub_)
+        img, ext = ds_image(d[lo], d[la], inferno_list(), width=240)
+        ds_panel(ax, img, ext, title, sub_, interpolation="nearest")
     fig.savefig(path, dpi=130, bbox_inches="tight")
     plt.close(fig)
 
