@@ -16,11 +16,12 @@ pip install -e .
 |---|---|---|
 | `tz` | `shapely>=2.1` | per-stay timezones from polygons ([Local time](../guide/local-time.md)) |
 | `h3` | `polars-h3>=0.7` (Python ≥ 3.11) | H3 heat maps ([Heat maps](../guide/spatial.md)) |
+| `roads` | `shapely>=2.1`, `numba>=0.59` | snapping trajectories to a road network ([Map matching](../guide/map-matching.md)) |
 | `cuda` | `cudf-polars-cu12>=26.4` | the GPU engine on CUDA 12 ([CUDA](../guide/cuda.md)) |
 | `cuda13` | `cudf-polars-cu13>=26.4` | the GPU engine on CUDA 13 |
 | `plot` | `matplotlib`, `contextily` | the example figures |
 | `docs` | `mkdocs-material`, `mkdocstrings[python]` | building this site |
-| `dev` | `pytest`, `scikit-learn`, `scipy`, `shapely`, `ruff` | the test suite |
+| `dev` | `pytest`, `scikit-learn`, `scipy`, `shapely`, `numba`, `ruff` | the test suite |
 
 ```bash
 pip install -e ".[tz,cuda]"        # typical GPU workstation

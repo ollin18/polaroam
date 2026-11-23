@@ -1,0 +1,158 @@
+"""Map matching example for the "Mexico City at scale" docs page.
+
+    python examples/download_osm.py /data/osm/cdmx                     # OSM: drive, bike, walk
+    python examples/mexico_city_matching.py /data/out/MX_2022_12 --osm /data/osm/cdmx \\
+        --pings "/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet" --sinks mx_sinks.parquet
+
+1. A random sample of devices; their trajectories re-extracted at full resolution
+   (``simplify_tolerance=0``) from the month's stays.
+2. Each mode matched on its own OpenStreetMap network: walk, bike, drive (motorized).
+3. Trajectories per street segment, per mode: an aggregate over thousands of devices.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import time
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import polars as pl
+import shapely
+from make_figures import THEMES, merc, style
+from matplotlib.collections import LineCollection
+from matplotlib.colors import LinearSegmentedColormap, LogNorm
+from mexico_city_figures import MAP_BG, MAP_LINE, blend, extent, inside, outline
+
+import polaroam as pr
+
+NETWORKS = {"walk": "walk", "bike": "bike", "motorized": "drive"}
+
+
+def sample_trajectories(out: str, pings: str, sinks: str | None, n_devices: int, path: Path) -> pl.DataFrame:
+    if path.exists():
+        return pl.read_parquet(path)
+    traj = pl.scan_parquet(glob.glob(f"{out}/trajectories/**/shard=*.parquet", recursive=True))
+    uids = traj.select("uid").unique().collect().sample(n=n_devices, seed=1)["uid"].implode()
+    stops = pl.scan_parquet(glob.glob(f"{out}/stops/**/shard=*.parquet", recursive=True))
+    t = time.time()
+    tr = pr.extract_trajectories(pr.read_pings(pings).filter(pl.col("uid").is_in(uids)),
+                                 stops.filter(pl.col("uid").is_in(uids)).collect(),
+                                 simplify_tolerance=0, min_pings=2, min_length_m=100, remove_sinks=sinks or False)
+    tr.write_parquet(path)
+    print(f"{tr.height:,} full-resolution trajectories from {n_devices:,} devices ({time.time() - t:.0f}s)")
+    return tr
+
+
+def summary(res: pr.MatchResult, tr: pl.DataFrame) -> pl.DataFrame:
+    m = res.trajectories.join(tr.select("uid", "trajectory_id", "length_m"), on=["uid", "trajectory_id"])
+    return (m.group_by("mode_guess").agg(
+        pl.len().alias("trajectories"),
+        (pl.col("n_matched").sum() / pl.col("n_points").sum()).alias("points_matched"),
+        (pl.col("n_parts") == 1).mean().alias("one_part"),
+        (pl.col("n_parts") == 0).mean().alias("no_road"),
+        pl.col("mean_distance_m").median().alias("median_distance_m"),
+        (pl.col("matched_length_m").sum() / 1000).alias("matched_km"))
+        .sort("trajectories", descending=True))
+
+
+def undirected_volumes(vol: pl.DataFrame, net: pr.RoadNetwork) -> pl.DataFrame:
+    """Both directions of a street together: trajectories per street segment."""
+    e = net.edges.select("edge", "u", "v")
+    return (vol.join(e, on="edge")
+            .with_columns(pl.min_horizontal("u", "v").alias("a"), pl.max_horizontal("u", "v").alias("b"))
+            .group_by("a", "b").agg(pl.col("trajectories").sum(), pl.col("edge").first()))
+
+
+def segments(net: pr.RoadNetwork, edges: np.ndarray):
+    g = net._geoms[edges]
+    xy, idx = shapely.get_coordinates(g, return_index=True)
+    x, y = merc(xy[:, 0], xy[:, 1])
+    cut = np.flatnonzero(np.diff(idx)) + 1
+    return np.split(np.column_stack([x, y]), cut)
+
+
+def fig_matched(nets, vols, counts, t, path):
+    x0, x1, y0, y1 = extent()
+    # panels in the city's proportions, side by side
+    width, top, bottom, gap = 16.0, 0.885, 0.035, 0.012
+    panel_w = width * (1 - 2 * gap) / 3
+    height = panel_w * (y1 - y0) / (x1 - x0) / (top - bottom)
+    fig, axes = plt.subplots(1, 3, figsize=(width, height))
+    fig.subplots_adjust(left=0.004, right=0.996, wspace=0.03, top=top, bottom=bottom)
+    for ax, mode, color in zip(axes, NETWORKS, t["series"]):
+        net, v = nets[mode], vols[mode]
+        ax.set_facecolor(MAP_BG)
+        # the whole network, faint, inside the city
+        mid = shapely.get_coordinates(shapely.line_interpolate_point(net._geoms, 0.5, normalized=True))
+        base = np.flatnonzero(inside(mid[:, 0], mid[:, 1]))
+        ax.add_collection(LineCollection(segments(net, base), colors="#34342f", linewidths=0.15))
+        v = v.filter(pl.Series(inside(*shapely.get_coordinates(shapely.line_interpolate_point(
+            net._geoms[v["edge"].to_numpy()], 0.5, normalized=True)).T))).sort("trajectories")
+        n = v["trajectories"].to_numpy().astype(float)
+        vmax = max(n.max(), 2)
+        # quiet streets in a dark shade of the mode's hue, the busiest in white
+        cmap = LinearSegmentedColormap.from_list(mode, [
+            (0.0, blend(color, MAP_BG, 0.7)), (0.45, color), (0.82, blend(color, "#ffffff", 0.55)), (1.0, "#ffffff")])
+        norm = LogNorm(vmin=1, vmax=vmax)
+        f = np.clip(np.log(n) / np.log(vmax), 0, 1)
+        lw = 0.12 + 1.1 * f ** 2
+        ax.add_collection(LineCollection(segments(net, v["edge"].to_numpy()), colors=cmap(norm(n)), linewidths=lw))
+        ax.set_xlim(x0, x1), ax.set_ylim(y0, y1), ax.set_aspect("equal")
+        outline(ax, t, lw=0.8, color=MAP_LINE)
+        ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
+        for s in ax.spines.values():
+            s.set_visible(False)
+        ax.set_title(f"{mode} · {counts[mode]:,} trajectories", color=t["ink"], fontsize=12, loc="left")
+    fig.suptitle("Trajectories matched to the streets, each mode on its OpenStreetMap network "
+                 "(walk, bike, drive): trajectories per street segment, log scale",
+                 x=0.006, y=0.985, ha="left", fontsize=12.5, fontweight="bold", color=t["ink"])
+    fig.text(0.995, 0.005, "Streets © OpenStreetMap contributors (ODbL)", ha="right", va="bottom",
+             fontsize=8, color=t["muted"])
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("output_dir")
+    ap.add_argument("--osm", required=True, help="directory with drive/bike/walk.parquet (examples/download_osm.py)")
+    ap.add_argument("--pings", required=True)
+    ap.add_argument("--sinks")
+    ap.add_argument("--devices", type=int, default=60_000)
+    ap.add_argument("--work", default="examples/output/matching")
+    ap.add_argument("--out", default="docs/assets/figures")
+    ap.add_argument("--reuse", action="store_true", help="reuse saved matches (redraw the figure only)")
+    a = ap.parse_args()
+    work = Path(a.work)
+    work.mkdir(parents=True, exist_ok=True)
+    tr = sample_trajectories(a.output_dir, a.pings, a.sinks, a.devices, work / f"sample_{a.devices}.parquet")
+    nets = {m: pr.RoadNetwork(pl.read_parquet(f"{a.osm}/{k}.parquet"), directed=True) for m, k in NETWORKS.items()}
+    for m, net in nets.items():
+        print(m, net)
+    if a.reuse and (work / "matched_edges.parquet").exists():
+        res = pr.MatchResult(pl.read_parquet(work / "matched_trajectories.parquet"), pl.DataFrame(),
+                             pl.read_parquet(work / "matched_edges.parquet"))
+    else:
+        t0 = time.time()
+        res = pr.match_trajectories(tr, nets)
+        n_pts = int(res.trajectories["n_points"].sum())
+        print(f"matched {res.trajectories.height:,} trajectories, {n_pts:,} points in {time.time() - t0:.0f}s",
+              flush=True)
+        res.trajectories.write_parquet(work / "matched_trajectories.parquet")
+        res.edges.write_parquet(work / "matched_edges.parquet")
+    with pl.Config(tbl_cols=10, tbl_width_chars=160):
+        print(summary(res, tr))
+    vols, counts = {}, {}
+    for m, net in nets.items():
+        e = res.edges.filter(pl.col("mode_guess") == m)
+        vols[m] = undirected_volumes(pr.edge_volumes(e, min_fraction=0.5), net)
+        counts[m] = res.trajectories.filter((pl.col("mode_guess") == m) & (pl.col("n_parts") > 0)).height
+    style(THEMES["light"])  # one image for both site themes: white page, dark map panel
+    fig_matched(nets, vols, counts, THEMES["light"], f"{a.out}/cdmx_matched.png")
+
+
+if __name__ == "__main__":
+    main()

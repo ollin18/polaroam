@@ -131,6 +131,7 @@ nav:
       - Home and work: guide/home-work.md
       - Trajectories: guide/trajectories.md
       - Speed and transport mode: guide/speed-and-mode.md
+      - Map matching: guide/map-matching.md
       - Heat maps (H3) and data quality: guide/spatial.md
       - Incremental processing: guide/incremental.md
       - CUDA: guide/cuda.md
@@ -153,6 +154,7 @@ nav:
       - Stays: reference/stops.md
       - Clustering: reference/clustering.md
       - Trajectories: reference/trajectories.md
+      - Map matching: reference/roads.md
       - Local time: reference/local_time.md
       - Home and work: reference/home_work.md
       - H3 aggregation: reference/h3.md

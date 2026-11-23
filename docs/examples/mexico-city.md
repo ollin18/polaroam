@@ -116,6 +116,45 @@ The same, split by the baseline `mode_guess`:
     `mode_guess` is a baseline and a feature set, not ground truth. See [Speed and transport
     mode](../guide/speed-and-mode.md).
 
+### Snapped to the streets
+
+The maps above draw where the pings are. [Map matching](../guide/map-matching.md) snaps each
+trajectory to the street network it can use, so it follows real streets and tells which street
+segments it traversed. Each mode is matched on its own OpenStreetMap network: walkers on
+footpaths and pedestrian streets, cyclists on the bike network, motorized trips on the drive
+network with its one-way streets.
+
+```python
+# a random 4% of the devices, their trajectories with every ping
+trips = pr.extract_trajectories(pings, stops, simplify_tolerance=0, min_pings=2, min_length_m=100,
+                                remove_sinks="mx_sinks.parquet")
+nets = {m: pr.RoadNetwork(pl.read_parquet(f"osm/{k}.parquet"), directed=True)
+        for m, k in [("walk", "walk"), ("bike", "bike"), ("motorized", "drive")]}
+res = pr.match_trajectories(trips, nets)
+vol = pr.edge_volumes(res.edges, by="mode_guess", min_fraction=0.5)
+```
+
+![Trajectories matched to the streets of Mexico City, by mode](../assets/figures/cdmx_matched.png)
+
+| Mode | Network (OSM) | Trajectories | Points matched | In one piece | No matched line | Median distance to the road |
+|---|---|---|---|---|---|---|
+| motorized | drive: 125,606 nodes, 295,154 edges | 370,618 | 93.0% | 87.1% | 6.8% | 8.7 m |
+| bike | bike: 163,318 nodes, 379,006 edges | 101,324 | 93.2% | 89.6% | 8.2% | 8.9 m |
+| walk | walk: 192,068 nodes, 535,444 edges | 95,575 | 93.1% | 88.6% | 11.1% | 11.3 m |
+
+- **Motorized** trips concentrate on the road hierarchy: Periférico, Circuito Interior,
+  Viaducto, Insurgentes, Calzada de Tlalpan.
+- **Bike** trips spread over the whole grid, densest in the center.
+- **Walk** trips stay local: many streets, few trips each.
+- "No matched line": short trajectories (median 6 points) with at most one ping within 80 m of
+  the mode's network, so there is nothing to connect.
+
+Matching the 567,517 trajectories (11.7M points) on the three networks took 8.8 minutes on 32
+CPU cores. The script peaked at 32 GB of RAM, most of it the results kept in memory: the
+traversed-edges table alone has 46.6M rows (6 GB). Matching all the walk trajectories alone
+peaks at 5.7 GB. For larger runs, match in batches (a day, or a shard of devices) and write
+each result.
+
 ## How trajectories were fixed along the way
 
 Two artifacts were found in this data and fixed in the library:
@@ -157,6 +196,9 @@ pipe.finalize()
 ```bash
 python examples/mexico_city_figures.py /data/out/MX_2022_12            # maps, H3, trajectories by mode
 python examples/mexico_city_figures.py /data/out/MX_2022_12 --modes    # speed / mode figure
+python examples/download_osm.py /data/osm/cdmx                          # OpenStreetMap: drive, bike, walk
+python examples/mexico_city_matching.py /data/out/MX_2022_12 --osm /data/osm/cdmx \
+    --pings "/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet" --sinks mx_sinks.parquet
 ```
 
 The city boundary used for clipping is `examples/data/cdmx_boundary.geojson` (INEGI, simplified

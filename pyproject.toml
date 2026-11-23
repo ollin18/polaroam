@@ -19,9 +19,11 @@ cuda = ["cudf-polars-cu12>=26.4"]
 cuda13 = ["cudf-polars-cu13>=26.4"]
 tz = ["shapely>=2.1"]
 h3 = ["polars-h3>=0.7"]
+# map matching: snap trajectories to a road network (osmnx only to download OpenStreetMap)
+roads = ["shapely>=2.1", "numba>=0.59"]
 plot = ["matplotlib", "contextily", "datashader"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.26", "mkdocs-glightbox>=0.4"]
-dev = ["pytest>=8", "scikit-learn", "scipy", "shapely>=2.1", "polars-h3>=0.7", "ruff"]
+dev = ["pytest>=8", "scikit-learn", "scipy", "shapely>=2.1", "polars-h3>=0.7", "numba>=0.59", "ruff"]
 
 [project.scripts]
 polaroam = "polaroam.cli:main"

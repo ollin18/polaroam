@@ -12,7 +12,8 @@ import polaroam as pr
 | [Stays](stops.md) | `detect_stops`, `StopDetector`, `StopState` |
 | [Clustering](clustering.md) | `cluster_stops`, `IncrementalDBSCAN`, `ClusterState`, `connected_components` |
 | [Trajectories](trajectories.md) | `extract_trajectories`, `build_trajectories`, `speed_features`, `guess_mode`, `douglas_peucker` |
-| [Local time](local_time.md) | `add_local_time`, `lookup_timezones` |
+| [Map matching](roads.md) | `RoadNetwork`, `match_trajectories`, `MatchParams`, `MatchResult`, `edge_volumes` |
+| [Local time](local_time.md) | `add_local_time`, `lookup_timezones`, `suggest_timezone`, `builtin_timezones` |
 | [Home and work](home_work.md) | `classify_home_work`, `home_work_locations`, `home_work_clusters` |
 | [H3 aggregation](h3.md) | `home_work_h3`, `h3_counts`, `h3_cells` |
 | [Data quality](quality.md) | `coordinate_sinks`, `drop_sinks` |

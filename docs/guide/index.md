@@ -9,6 +9,8 @@ flowchart LR
     P --> T[Trajectories<br/>moving pings]
     S --> T
     T --> M[Speed features<br/>and mode guess]
+    M --> R[Map matching<br/>streets per mode]
+    N[(Road network<br/>OSM or your own)] --> R
     S --> C[Clusters<br/>per-device DBSCAN]
     C --> L[Local time<br/>fixed or polygons]
     L --> H[Home / work<br/>H · W · O]
@@ -21,6 +23,7 @@ flowchart LR
 | Stays | `detect_stops` | `StopDetector` | [Stays](stays.md) |
 | Trajectories | `detect_stops(..., trajectories=True)` or `extract_trajectories` | `StopDetector(trajectories=True)` | [Trajectories](trajectories.md) |
 | Speed and mode | computed with the trajectories, `guess_mode` | | [Speed and mode](speed-and-mode.md) |
+| Map matching | `RoadNetwork`, `match_trajectories`, `edge_volumes` | per batch of trajectories | [Map matching](map-matching.md) |
 | Clusters | `cluster_stops` | `IncrementalDBSCAN` | [Clustering](clustering.md) |
 | Local time | `add_local_time` | (cheap, recomputed) | [Local time](local-time.md) |
 | Home / work | `classify_home_work`, `home_work_locations` | (cheap, recomputed) | [Home and work](home-work.md) |

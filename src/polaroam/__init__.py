@@ -28,6 +28,7 @@ from .local_time import (
 )
 from .pipeline import Pipeline
 from .quality import coordinate_sinks, drop_sinks, find_sinks
+from .roads import MatchParams, MatchResult, RoadNetwork, edge_volumes, match_trajectories
 from .stops import StopDetector, StopState, detect_stops
 from .trajectories import build_trajectories, douglas_peucker, extract_trajectories, guess_mode, speed_features
 
@@ -39,8 +40,11 @@ __all__ = [
     "ClusterState",
     "HomeWorkParams",
     "IncrementalDBSCAN",
+    "MatchParams",
+    "MatchResult",
     "Pipeline",
     "PipelineConfig",
+    "RoadNetwork",
     "StopDetector",
     "StopParams",
     "StopState",
@@ -58,6 +62,7 @@ __all__ = [
     "detect_stops",
     "douglas_peucker",
     "drop_sinks",
+    "edge_volumes",
     "extract_trajectories",
     "find_sinks",
     "guess_mode",
@@ -67,6 +72,7 @@ __all__ = [
     "home_work_h3",
     "home_work_locations",
     "lookup_timezones",
+    "match_trajectories",
     "read_pings",
     "shard_expr",
     "speed_features",

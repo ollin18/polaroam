@@ -4,6 +4,7 @@
     polaroam update   INPUT OUTPUT [options]   # one incremental batch (e.g. a day)
     polaroam finalize OUTPUT                   # close open stays after the last batch
     polaroam trajectories PINGS STOPS OUT.parquet
+    polaroam match    TRAJECTORIES OUT_DIR --network ROADS.parquet  # snap trajectories to roads
 """
 
 from __future__ import annotations
@@ -153,6 +154,17 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("out", help="parquet to write (latitude, longitude, devices)")
     k.add_argument("--min-devices", type=int, default=5000)
     k.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
+    mt = sub.add_parser("match", help="snap trajectories to a road network (map matching)")
+    mt.add_argument("trajectories", help="parquet of trajectories (keep every ping: --tolerance 0)")
+    mt.add_argument("out", help="output directory: trajectories, points and edges parquet")
+    mt.add_argument("--network", action="append", required=True, metavar="[MODE=]ROADS",
+                    help="road table (parquet/csv, WKB or WKT geometry); per mode: --network walk=walk.parquet "
+                         "--network motorized=drive.parquet")
+    mt.add_argument("--by", default="mode_guess", help="column choosing the network (default mode_guess)")
+    mt.add_argument("--directed", action="store_true", help="road rows are one direction each (osmnx edges)")
+    for name, kind in (("search-radius", float), ("max-candidates", int), ("sigma", float), ("beta", float),
+                       ("route-factor", float), ("max-speed", float)):
+        mt.add_argument(f"--{name}", type=kind)
     a = ap.parse_args(argv)
 
     from .local_time import TimezoneRequired
@@ -166,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(a: argparse.Namespace, Pipeline) -> int:
+    if a.cmd == "match":
+        return _match(a)
     if a.cmd == "sinks":
         from .quality import find_sinks
 
@@ -192,6 +206,32 @@ def _run(a: argparse.Namespace, Pipeline) -> int:
         print(f"{tr.height:,} trajectories -> {a.out}")
         return 0
     print(f"done: {s.n_stops:,} stops, {s.n_trajectories:,} trajectories in {s.seconds:.1f}s")
+    return 0
+
+
+
+def _match(a: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    import polars as pl
+
+    from .roads import MatchParams, RoadNetwork, match_trajectories
+
+    nets = {}
+    for item in a.network:
+        mode, sep, path = item.rpartition("=")
+        nets[mode if sep else None] = RoadNetwork.read(path, directed=a.directed)
+    network = nets[None] if list(nets) == [None] else {k: v for k, v in nets.items() if k is not None}
+    over = {k: v for k, v in (("search_radius", a.search_radius), ("max_candidates", a.max_candidates),
+                              ("sigma", a.sigma), ("beta", a.beta), ("route_factor", a.route_factor),
+                              ("max_speed_kmh", a.max_speed)) if v is not None}
+    res = match_trajectories(pl.scan_parquet(a.trajectories), network, MatchParams(**over), by=a.by)
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for name in ("trajectories", "points", "edges"):
+        getattr(res, name).write_parquet(out / f"{name}.parquet")
+    t = res.trajectories
+    print(f"{t.height:,} trajectories matched ({int((t['n_parts'] == 1).sum()):,} in one piece) -> {out}")
     return 0
 
 

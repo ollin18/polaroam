@@ -8,6 +8,7 @@ polaroam update   INPUT OUTPUT [options]     # one incremental batch (e.g. a day
 polaroam finalize OUTPUT                     # close open stays after the last batch
 polaroam sinks    INPUT SINKS.parquet        # find coordinate sinks (default geocodes, towers)
 polaroam trajectories PINGS STOPS OUT.parquet [options]
+polaroam match    TRAJECTORIES OUT_DIR --network ROADS.parquet   # snap trajectories to roads
 ```
 
 ## Examples
