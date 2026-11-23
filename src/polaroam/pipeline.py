@@ -14,7 +14,7 @@ Output directory layout::
       clusters/shard=<k>.parquet                 clustered stops (current)
       home_work/shard=<k>.parquet                stops with local time + H/W/O
       locations/shard=<k>.parquet                one row per device: home & work
-      _state/shard=<k>/...                       incremental state
+      _state/shard=<k>/...                       incremental state (+ timezone of every stay coordinate)
 
 Devices are split into ``n_shards`` groups by a stable hash of ``uid``; each
 shard is processed independently, which bounds memory for very large inputs.
@@ -36,7 +36,7 @@ from .clustering import ClusterState, IncrementalDBSCAN
 from .config import ClusterParams, HomeWorkParams, PipelineConfig, StopParams, TrajectoryParams
 from .home_work import classify_home_work, home_work_locations
 from .io import PingSource, read_pings, shard_expr
-from .local_time import add_local_time
+from .local_time import add_local_time, timezone_table
 from .quality import remove_sink_pings, sink_table
 from .stops import StopDetector, StopState
 
@@ -67,6 +67,7 @@ class Pipeline:
                  trajectories: bool = False, use_cuda: bool = False, verbose: bool = True):
         self.dir = Path(output_dir)
         self._one_shot = False
+        self._tz: dict[int, pl.DataFrame] = {}  # timezone lookups made in this batch, per shard
         self.use_cuda = use_cuda
         self.verbose = verbose
         manifest = self._read_manifest()
@@ -140,6 +141,11 @@ class Pipeline:
             shutil.rmtree(tmp, ignore_errors=True)
             det.state.save(tmp)
             db.state.save(tmp)
+            tz = self._tz.pop(k, None)
+            if tz is not None:
+                tz.write_parquet(tmp / "timezones.parquet")
+            elif (sdir / "timezones.parquet").exists():
+                shutil.copy2(sdir / "timezones.parquet", tmp / "timezones.parquet")
             shutil.rmtree(sdir, ignore_errors=True)
             tmp.rename(sdir)
 
@@ -191,6 +197,7 @@ class Pipeline:
             db = IncrementalDBSCAN(self.config.dbscan, ClusterState.load(self.dir / "_state" / f"shard={k}"),
                                    use_cuda=self.use_cuda)
             self._refresh_home_work(db, k)
+        self._tz.clear()  # outside update(): the state on disk is not rewritten
 
     def reset(self) -> None:
         """Delete every table and the state written by polaroam in ``output_dir``."""
@@ -259,7 +266,13 @@ class Pipeline:
     def _refresh_home_work(self, db: IncrementalDBSCAN, k: int) -> None:
         cfg = self.config
         clusters = db.labels()
-        local = add_local_time(clusters, cfg.timezone, cfg.tz_polygons, use_cuda=self.use_cuda)
+        tz = None
+        if cfg.tz_polygons:
+            # a stay's coordinate never changes: look up only coordinates not seen in earlier batches
+            f = self.dir / "_state" / f"shard={k}" / "timezones.parquet"
+            known = self._tz.get(k, pl.read_parquet(f) if f.exists() else None)
+            tz = self._tz[k] = timezone_table(clusters, cfg.tz_polygons, known=known)
+        local = add_local_time(clusters, cfg.timezone, cfg.tz_polygons, timezones=tz, use_cuda=self.use_cuda)
         hw = classify_home_work(local, cfg.home_work, use_cuda=self.use_cuda)
         self._write(clusters, "clusters", None, k)
         self._write(hw, "home_work", None, k)

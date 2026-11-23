@@ -59,7 +59,7 @@ A flat polaroam file (the same keys without `countries`) works too, and it can a
 | | `slow_speed_kmh` | 7 | threshold for `frac_slow` |
 | | `wkt_measure` | False | `LINESTRING M` with time as the measure |
 | Pipeline | `timezone` | UTC | fixed timezone, or fallback for polygons |
-| | `tz_polygons` | None | `tz,geometry` CSV |
+| | `tz_polygons` | None | `"builtin"` (bundled world polygons) or a `tz,geometry` CSV |
 | | `column_map` | {} | `{"uid": ..., "latitude": ..., "longitude": ..., "timestamp": ...}` |
 | | `n_shards` | 1 | device groups processed independently |
 | | `remove_sinks` | False | drop pings at coordinate sinks first: `True` finds them, or a parquet path ([sinks](spatial.md#data-quality-coordinate-sinks)) |

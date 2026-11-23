@@ -39,7 +39,7 @@ polaroam trajectories "raw/MX/**/*.parquet" "out/MX/stops/**/*.parquet" trips.pa
 |---|---|---|
 | `--config FILE`, `--label L` | run, update | load a `pipeline_config.json` (gc-lbs format accepted) |
 | `--timezone TZ` | run, update | fixed (or fallback) timezone |
-| `--tz-polygons CSV` | run, update | `tz,geometry` CSV for per-stay timezones |
+| `--tz-polygons builtin\|CSV` | run, update | per-stay timezones: the bundled polygons, or a `tz,geometry` CSV |
 | `--shards N` | run, update | split devices into N groups |
 | `--remove-sinks [FILE]` | run, update, trajectories | drop pings at coordinate sinks first: alone, find them in the input (saved to `OUTPUT/sinks.parquet`); with `FILE`, use that list |
 | `--sinks-min-devices N` | run, update, trajectories | devices on one exact coordinate to call it a sink (default 5000) |

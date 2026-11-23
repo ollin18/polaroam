@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--config", help="pipeline_config.json (gc-lbs format accepted)")
         p.add_argument("--label", help="country/label inside --config, e.g. CO")
         p.add_argument("--timezone", help="fixed (or fallback) timezone, e.g. America/Bogota")
-        p.add_argument("--tz-polygons", help="CSV with tz,geometry(WKT) columns for per-stop timezones")
+        p.add_argument("--tz-polygons", help="per-stop timezones: 'builtin' (bundled world polygons) or a CSV with tz,geometry (WKT)")
         p.add_argument("--shards", type=int, help="split devices into N groups (bounded memory)")
         p.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
         p.add_argument("--distance", type=float, help="stop distance threshold (m)")

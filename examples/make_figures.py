@@ -1,7 +1,7 @@
 """Build the README figures from the example data.
 
     python examples/make_figures.py data/veraset_movement_416.snappy.parquet \
-        --tz-polygons path/to/tz_codes.csv
+        --tz-polygons builtin
 
 Maps only show aggregates over many devices (density, overlaid trajectories);
 the single-device panel is drawn in a relative frame (km from an arbitrary
@@ -333,7 +333,7 @@ def fig_speed_profiles(pings, stops, tr, t, out, seed=3):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("pings")
-    ap.add_argument("--tz-polygons")
+    ap.add_argument("--tz-polygons", default="builtin")
     ap.add_argument("--work-dir", default="examples/output")
     ap.add_argument("--out", default="docs/assets/figures")
     a = ap.parse_args()

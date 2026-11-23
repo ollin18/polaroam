@@ -41,12 +41,12 @@ print("CUDA available:", pr.cuda_available())
 ```
 
 ```bash
-pytest -q      # with the dev extra: 35 tests, GPU tests skipped without CUDA
+pytest -q      # with the dev extra; GPU tests are skipped without CUDA
 ```
 
 ## Timezone polygons
 
-Per-stay timezones need a CSV with a `tz` column and a WKT `geometry` column, like the
-`tz_codes.csv` of the gc-lbs pipeline (world timezone polygons, ~21 MB). It is not bundled.
-Pass its path as `tz_polygons=` or `--tz-polygons`. If every stay is in one timezone, a fixed
-`timezone=` needs no file and no shapely.
+World timezone polygons are bundled: pass `tz_polygons="builtin"` (or `--tz-polygons builtin`)
+for per-stay timezones; this needs the `tz` extra (shapely). A CSV with a `tz` column and a WKT
+`geometry` column works too. If every stay is in one timezone, a fixed `timezone=` needs no
+polygons and no shapely. See [Local time](../guide/local-time.md).
