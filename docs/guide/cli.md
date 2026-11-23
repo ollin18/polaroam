@@ -44,7 +44,9 @@ polaroam trajectories "raw/MX/**/*.parquet" "out/MX/stops/**/*.parquet" trips.pa
 | `--remove-sinks [FILE]` | run, update, trajectories | drop pings at coordinate sinks first: alone, find them in the input (saved to `OUTPUT/sinks.parquet`); with `FILE`, use that list |
 | `--sinks-min-devices N` | run, update, trajectories | devices on one exact coordinate to call it a sink (default 5000) |
 | `--min-devices N` | sinks | devices sharing an exact coordinate to call it a sink (default 5000) |
-| `--col std=yours` | run, update | column mapping, repeatable (`--col uid=aid`) |
+| `--col std=yours[,other]` | run, update, sinks | column mapping, repeatable (`--col uid=aid`, `--col latitude=lat,y`) |
+| `--timestamp-unit U` | run, update | `s`, `ms`, `us`, `ns` or `auto` (default) |
+| `--timestamp-timezone TZ` | run, update | how to read date-times without a timezone (default UTC) |
 | `--distance`, `--time`, `--min-duration` | run, update | stay parameters (m, s, s) |
 | `--dbscan-dist`, `--min-points` | run, update | DBSCAN parameters |
 | `--trajectories` | run, update | also extract trajectories |

@@ -85,7 +85,7 @@ class Pipeline:
             self.trajectories = trajectories
 
     # ------------------------------------------------------------------ public
-    def run(self, pings: PingSource, *, overwrite: bool = False, column_map: dict[str, str] | None = None) -> BatchSummary:
+    def run(self, pings: PingSource, *, overwrite: bool = False, column_map: dict[str, str | list[str]] | None = None) -> BatchSummary:
         """Process all pings at once (resets previous outputs if ``overwrite``)."""
         if self._read_manifest() is not None:
             if not overwrite:
@@ -98,7 +98,7 @@ class Pipeline:
             self._one_shot = False
 
     def update(self, pings: PingSource, *, batch_id: str | None = None, flush: bool = False,
-               compute_home_work: bool = True, column_map: dict[str, str] | None = None) -> BatchSummary:
+               compute_home_work: bool = True, column_map: dict[str, str | list[str]] | None = None) -> BatchSummary:
         """Process one batch of pings (e.g. a day), committing it per shard.
 
         Batches must come in time order per device. Re-running a committed
@@ -115,7 +115,8 @@ class Pipeline:
             self._log(f"batch {batch_id} already committed; skipping")
             return BatchSummary(batch_id, 0, 0, 0.0)
 
-        lf = read_pings(pings, column_map or cfg.column_map)
+        lf = read_pings(pings, column_map or cfg.column_map, timestamp_unit=cfg.timestamp_unit,
+                        timestamp_timezone=cfg.timestamp_timezone)
         if cfg.timezone is None and not cfg.find_timezones:
             # fail before any work, with a timezone suggested from a sample of these pings
             raise timezone_required(lf, "latitude", "longitude")
@@ -321,6 +322,7 @@ def _config_from_dict(d: dict) -> PipelineConfig:
         stops=StopParams(**d["stops"]), dbscan=ClusterParams(**d["dbscan"]),
         home_work=HomeWorkParams(**d["home_work"]), trajectories=TrajectoryParams(**d["trajectories"]),
         column_map=d.get("column_map", {}), n_shards=d.get("n_shards", 1),
+        timestamp_unit=d.get("timestamp_unit", "auto"), timestamp_timezone=d.get("timestamp_timezone", "UTC"),
         # output directories written before remove_sinks stored the file as drop_coordinates
         remove_sinks=d.get("remove_sinks", d.get("drop_coordinates") or False),
         sinks_min_devices=d.get("sinks_min_devices", 5000),

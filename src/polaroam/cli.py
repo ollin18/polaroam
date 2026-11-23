@@ -20,7 +20,7 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
         cfg = PipelineConfig.from_json(a.config, a.label)
     elif any(v is not None for v in (a.timezone, a.find_timezones, a.tz_polygons, a.shards, a.distance, a.time, a.min_duration,
                                      a.drop_coordinates, a.remove_sinks, a.sinks_min_devices,
-                                     a.dbscan_dist, a.min_points, *_traj_args(a).values())) or a.col:
+                                     a.dbscan_dist, a.min_points, a.timestamp_unit, a.timestamp_timezone, *_traj_args(a).values())) or a.col:
         cfg = PipelineConfig()
     else:
         return None
@@ -40,7 +40,11 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
     if a.sinks_min_devices is not None:
         over["sinks_min_devices"] = a.sinks_min_devices
     if a.col:
-        over["column_map"] = dict(c.split("=", 1) for c in a.col)
+        over["column_map"] = _column_map(a.col)
+    if a.timestamp_unit:
+        over["timestamp_unit"] = a.timestamp_unit
+    if a.timestamp_timezone:
+        over["timestamp_timezone"] = a.timestamp_timezone
     stops = {k: v for k, v in (("distance_threshold", a.distance), ("time_threshold", a.time),
                                ("min_stop_duration", a.min_duration)) if v is not None}
     db = {k: v for k, v in (("distance", a.dbscan_dist), ("min_points", a.min_points)) if v is not None}
@@ -52,6 +56,18 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
     if tr:
         over["trajectories"] = dataclasses.replace(cfg.trajectories, **tr)
     return dataclasses.replace(cfg, **over)
+
+
+def _column_map(items: list[str] | None) -> dict[str, str | list[str]] | None:
+    """``["uid=device_id", "latitude=lat,y"]`` -> ``{"uid": "device_id", "latitude": ["lat", "y"]}``."""
+    if not items:
+        return None
+    out: dict[str, str | list[str]] = {}
+    for item in items:
+        std, _, cols = item.partition("=")
+        names = [c.strip() for c in cols.split(",") if c.strip()]
+        out[std.strip()] = names[0] if len(names) == 1 else names
+    return out
 
 
 def _add_sink_args(p: argparse.ArgumentParser) -> None:
@@ -103,7 +119,11 @@ def main(argv: list[str] | None = None) -> int:
                             "tz,geometry (WKT) file. Only for data spanning several timezones")
         p.add_argument("--tz-polygons", help=argparse.SUPPRESS)  # old name of --find-timezones
         p.add_argument("--shards", type=int, help="split devices into N groups (bounded memory)")
-        p.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
+        p.add_argument("--col", action="append",
+                       help="column mapping, repeatable: --col uid=device_id, or candidates --col latitude=lat,y")
+        p.add_argument("--timestamp-unit", choices=["auto", "s", "ms", "us", "ns"],
+                       help="Unix time unit of numeric timestamps (default: auto, from each value)")
+        p.add_argument("--timestamp-timezone", help="timezone of date-times without an offset (default UTC)")
         p.add_argument("--distance", type=float, help="stop distance threshold (m)")
         p.add_argument("--time", type=float, help="stop time threshold (s)")
         p.add_argument("--min-duration", type=float, help="minimum stop duration (s)")
@@ -149,7 +169,7 @@ def _run(a: argparse.Namespace, Pipeline) -> int:
     if a.cmd == "sinks":
         from .quality import find_sinks
 
-        cm = dict(c.split("=", 1) for c in a.col) if a.col else None
+        cm = _column_map(a.col)
         s = find_sinks(a.pings, a.min_devices, column_map=cm)
         s.write_parquet(a.out)
         print(f"{s.height:,} sink coordinates -> {a.out}")

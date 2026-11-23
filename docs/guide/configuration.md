@@ -60,7 +60,9 @@ A flat polaroam file (the same keys without `countries`) works too, and it can a
 | | `wkt_measure` | False | `LINESTRING M` with time as the measure |
 | Pipeline | `timezone` | **required** | timezone of the data; with `find_timezones`, the fallback (UTC if not given). Without either, the pipeline suggests one ([local time](local-time.md#not-sure-which-timezone)) |
 | | `find_timezones` | False | look up each stay's timezone: `True` (bundled polygons) or a `tz,geometry` CSV. Only for data spanning several timezones |
-| | `column_map` | {} | `{"uid": ..., "latitude": ..., "longitude": ..., "timestamp": ...}` |
+| | `column_map` | {} | your column per field: a name or a list of candidates, matched ignoring case ([input data](input.md)) |
+| | `timestamp_unit` | auto | Unix time unit of numeric timestamps: `s`, `ms`, `us`, `ns`, or detected per value |
+| | `timestamp_timezone` | UTC | how to read date-times without a timezone |
 | | `n_shards` | 1 | device groups processed independently |
 | | `remove_sinks` | False | drop pings at coordinate sinks first: `True` finds them, or a parquet path ([sinks](spatial.md#data-quality-coordinate-sinks)) |
 | | `sinks_min_devices` | 5000 | devices on one exact coordinate to call it a sink (with `remove_sinks=True`) |

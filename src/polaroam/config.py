@@ -97,6 +97,13 @@ class PipelineConfig:
         polaroam, a path a ``tz,geometry`` CSV of WKT polygons. Costs one lookup per stay
         coordinate, so use it only for data known to span several timezones.
     tz_polygons: deprecated alias of ``find_timezones``.
+    column_map: your column for each required field (``uid``, ``latitude``, ``longitude``,
+        ``timestamp``): a name, or a list of candidate names; names match ignoring case.
+        Fields not given are found among common names (``lat``, ``lng``, ``device_id``...).
+    timestamp_unit: Unix time unit of numeric timestamps: ``"s"``, ``"ms"``, ``"us"``,
+        ``"ns"``, or ``"auto"`` (from each value's magnitude).
+    timestamp_timezone: timezone of timestamps given as local date-times without an offset
+        (default UTC). Unix times are always UTC.
 
     remove_sinks: drop the pings at coordinate sinks (default geocodes, cell towers,
         Wi-Fi points) before anything else. ``False`` keeps every ping (gc-lbs behavior);
@@ -114,7 +121,9 @@ class PipelineConfig:
     dbscan: ClusterParams = field(default_factory=ClusterParams)
     home_work: HomeWorkParams = field(default_factory=HomeWorkParams)
     trajectories: TrajectoryParams = field(default_factory=TrajectoryParams)
-    column_map: dict[str, str] = field(default_factory=dict)
+    column_map: dict[str, str | list[str]] = field(default_factory=dict)
+    timestamp_unit: str = "auto"
+    timestamp_timezone: str = "UTC"
     n_shards: int = 1
     remove_sinks: bool | str = False
     sinks_min_devices: int = 5000
@@ -132,13 +141,18 @@ class PipelineConfig:
             self.find_timezones = True
         if not isinstance(self.find_timezones, (bool, str)):
             raise TypeError("find_timezones must be True/False or the path of a tz,geometry CSV.")
-        if self.timezone is not None:
+        if self.timestamp_unit not in ("auto", "s", "ms", "us", "ns"):
+            raise ValueError(f"timestamp_unit must be 'auto', 's', 'ms', 'us' or 'ns'; got {self.timestamp_unit!r}.")
+        for name in ("timezone", "timestamp_timezone"):
+            value = getattr(self, name)
+            if value is None:
+                continue
             from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
             try:
-                ZoneInfo(self.timezone)
+                ZoneInfo(value)
             except (ZoneInfoNotFoundError, ValueError):
-                raise ValueError(f"Unknown timezone {self.timezone!r}: use an IANA name such as "
+                raise ValueError(f"Unknown {name} {value!r}: use an IANA name such as "
                                  "'America/Mexico_City'.") from None
         if drop_coordinates is not None:
             warnings.warn("drop_coordinates is deprecated; use remove_sinks=<path>.", DeprecationWarning,
@@ -169,7 +183,8 @@ class PipelineConfig:
         }
         if "timezone" in section:
             kw["timezone"] = section["timezone"]
-        for key in ("find_timezones", "column_map", "n_shards", "remove_sinks", "sinks_min_devices"):
+        for key in ("find_timezones", "column_map", "n_shards", "remove_sinks", "sinks_min_devices",
+                    "timestamp_unit", "timestamp_timezone"):
             if key in section:
                 kw[key] = section[key]
         if "tz_polygons" in section and "find_timezones" not in section:  # older configs

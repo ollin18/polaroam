@@ -123,6 +123,7 @@ nav:
       - Quick start: getting-started/quickstart.md
   - User guide:
       - guide/index.md
+      - Input data: guide/input.md
       - The pipeline: guide/pipeline.md
       - Stays: guide/stays.md
       - Clustering (DBSCAN): guide/clustering.md

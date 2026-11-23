@@ -17,6 +17,7 @@ flowchart LR
 
 | Stage | Function | Incremental with | Page |
 |---|---|---|---|
+| Reading pings | `read_pings` (used by every stage) | | [Input data](input.md) |
 | Stays | `detect_stops` | `StopDetector` | [Stays](stays.md) |
 | Trajectories | `detect_stops(..., trajectories=True)` or `extract_trajectories` | `StopDetector(trajectories=True)` | [Trajectories](trajectories.md) |
 | Speed and mode | computed with the trajectories, `guess_mode` | | [Speed and mode](speed-and-mode.md) |
