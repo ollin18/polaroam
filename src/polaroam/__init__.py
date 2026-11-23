@@ -1,4 +1,4 @@
-"""PolaRoam: stay detection, trajectories and home/work locations with Polars.
+"""PolaRoam: stay detection, trajectories, map matching, routines and home/work locations with Polars.
 
 Quick start::
 

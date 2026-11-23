@@ -70,6 +70,23 @@ work_longitude` (work is null without a work location).
 | `coordinates` | list[list[f64]] | `[[lon, lat], …]` |
 | `timestamps` | list[i64] | Unix seconds per vertex |
 
+## `matched` (map matching)
+
+`match_trajectories` returns three tables (or writes them under `output_dir` as
+`trajectories/`, `points/` and `edges/`): one matched line per trajectory, each point's matched
+position, and the route's edges in order. Columns are in [Map matching](map-matching.md#outputs).
+
+## Trips and routines
+
+| Table | From | One row per |
+|---|---|---|
+| trips | `stay_trips`, then `find_routines` | move between two consecutive stays ≥ 200 m apart, with its `state`, `routine_id` and `mode` |
+| `done.trips` | `complete_trips` | routine trip, completed from stay to stay: observed and imputed length, estimated times, geometry |
+| `done.edges` | `complete_trips` | edge of a completed route, in order, flagged `imputed` |
+| `done.routes` | `complete_trips` | edge of a routine's usual streets, with the trips observed on it |
+
+Columns are in [Routines and trip completion](routines.md#completing-trips).
+
 !!! tip "Home and work, gc-lbs style"
     The gc-lbs README extracts home and work per device with SQL. In PolaRoam, that is the
     `locations` table, or:

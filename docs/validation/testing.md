@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                    # 35 tests; GPU tests are skipped without CUDA
+pytest -q                    # 110 tests; GPU tests are skipped without CUDA
 ruff check src tests examples
 ```
 
@@ -24,6 +24,12 @@ ruff check src tests examples
 | Speed features | known answers: constant speeds, stop-and-go time weighting, GPS jumps, 2-second noisy pings, long gaps, short fast endings | `test_speed.py` |
 | Timestamps and WKT M | vertex times aligned with coordinates; `LINESTRING M` measures | `test_speed.py` |
 | Mode guess | walk / bike / motorized on known trips; custom thresholds | `test_speed.py` |
+| Input | column names and aliases, timestamp formats and units, bad values raise | `test_io.py` |
+| Timezones | built-in polygons equal the gc-lbs CSV; exact grid lookup; suggestions when no timezone is given | `test_timezones.py` |
+| Coordinate sinks | found, removed in detection and the pipeline, reused across batches | `test_sinks.py`, `test_h3.py` |
+| H3 | counts with k-anonymity, cell geometry and resolution | `test_h3.py` |
+| Map matching | follows a known route on a street grid; HMM path identical to **brute force** over all candidate sequences; gaps and off-network points; modes and volumes; chunked output == in memory | `test_roads.py` |
+| Routines | trip states, routine mode passed to trips without one; completion follows the device's habit over a shorter street; empty trips filled with and without preference | `test_routines.py` |
 | CUDA | every stage on GPU == CPU **exactly**; incremental on GPU == one-shot on CPU | `test_cuda.py` |
 
 ## Large-scale checks

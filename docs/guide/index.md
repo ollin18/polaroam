@@ -1,7 +1,7 @@
 # User guide
 
-PolaRoam follows the four stages of the gc-lbs pipeline and adds trajectories and transport
-mode:
+PolaRoam follows the four stages of the gc-lbs pipeline and adds trajectories, transport
+mode, map matching and routines:
 
 ```mermaid
 flowchart LR
@@ -11,6 +11,9 @@ flowchart LR
     T --> M[Speed features<br/>and mode guess]
     M --> R[Map matching<br/>streets per mode]
     N[(Road network<br/>OSM or your own)] --> R
+    C --> RT[Routines<br/>repeated trips]
+    R --> RT
+    RT --> CT[(Completed trips<br/>stay to stay)]
     S --> C[Clusters<br/>per-device DBSCAN]
     C --> L[Local time<br/>fixed or polygons]
     L --> H[Home / work<br/>H · W · O]
@@ -24,6 +27,7 @@ flowchart LR
 | Trajectories | `detect_stops(..., trajectories=True)` or `extract_trajectories` | `StopDetector(trajectories=True)` | [Trajectories](trajectories.md) |
 | Speed and mode | computed with the trajectories, `guess_mode` | | [Speed and mode](speed-and-mode.md) |
 | Map matching | `RoadNetwork`, `match_trajectories`, `edge_volumes` | per batch of trajectories | [Map matching](map-matching.md) |
+| Routines and trip completion | `stay_trips`, `find_routines`, `routine_modes`, `complete_trips` | (recomputed on the clusters and matches) | [Routines](routines.md) |
 | Clusters | `cluster_stops` | `IncrementalDBSCAN` | [Clustering](clustering.md) |
 | Local time | `add_local_time` | (cheap, recomputed) | [Local time](local-time.md) |
 | Home / work | `classify_home_work`, `home_work_locations` | (cheap, recomputed) | [Home and work](home-work.md) |

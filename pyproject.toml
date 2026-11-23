@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "polaroam"
 version = "0.3.0"
-description = "Stay detection, trajectories and home/work locations from mobility pings with Polars (incremental, CPU or CUDA)."
+description = "Stay detection, trajectories, map matching, routines and home/work locations from mobility pings with Polars (incremental, CPU or CUDA)."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

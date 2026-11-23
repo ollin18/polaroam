@@ -86,4 +86,6 @@ polaroam run data/veraset_movement_416.snappy.parquet out/example \
 
 - [The pipeline](../guide/pipeline.md): one-shot vs incremental, output layout, retries.
 - [Speed and transport mode](../guide/speed-and-mode.md): what the speed features mean.
+- [Map matching](../guide/map-matching.md): trajectories on the streets.
+- [Routines and trip completion](../guide/routines.md): repeated trips, their mode, and partial trips completed.
 - [Example data, end to end](../examples/example-data.md): every figure, with the code.

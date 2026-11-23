@@ -14,7 +14,8 @@
 PolaRoam turns raw location pings (LBS / GPS) into:
 
 - **stays**;
-- **trajectories with speeds and transport mode**;
+- **trajectories with speeds and transport mode**, matched to the streets;
+- **routines**, which complete partial trips along each device's usual streets;
 - recurrent **places**;
 - **home / work** locations, with **H3 heat maps**.
 
@@ -67,6 +68,8 @@ Everything is at **<https://ollin18.github.io/polaroam/>**:
 - [Home and work](https://ollin18.github.io/polaroam/guide/home-work/)
 - [Trajectories](https://ollin18.github.io/polaroam/guide/trajectories/)
 - [Speed and transport mode](https://ollin18.github.io/polaroam/guide/speed-and-mode/)
+- [Map matching](https://ollin18.github.io/polaroam/guide/map-matching/)
+- [Routines and trip completion](https://ollin18.github.io/polaroam/guide/routines/)
 - [Heat maps (H3) and data quality](https://ollin18.github.io/polaroam/guide/spatial/)
 - [Incremental processing](https://ollin18.github.io/polaroam/guide/incremental/)
 - [CUDA](https://ollin18.github.io/polaroam/guide/cuda/)

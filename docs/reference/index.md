@@ -13,10 +13,11 @@ import polaroam as pr
 | [Clustering](clustering.md) | `cluster_stops`, `IncrementalDBSCAN`, `ClusterState`, `connected_components` |
 | [Trajectories](trajectories.md) | `extract_trajectories`, `build_trajectories`, `speed_features`, `guess_mode`, `douglas_peucker` |
 | [Map matching](roads.md) | `RoadNetwork`, `match_trajectories`, `MatchParams`, `MatchResult`, `edge_volumes` |
-| [Local time](local_time.md) | `add_local_time`, `lookup_timezones`, `suggest_timezone`, `builtin_timezones` |
+| [Routines](routines.md) | `stay_trips`, `find_routines`, `routine_modes`, `complete_trips`, `CompletionResult` |
+| [Local time](local_time.md) | `add_local_time`, `lookup_timezones`, `suggest_timezone`, `builtin_timezones`, `timezone_table`, `TimezoneRequired` |
 | [Home and work](home_work.md) | `classify_home_work`, `home_work_locations`, `home_work_clusters` |
 | [H3 aggregation](h3.md) | `home_work_h3`, `h3_counts`, `h3_cells` |
-| [Data quality](quality.md) | `coordinate_sinks`, `drop_sinks` |
+| [Data quality](quality.md) | `find_sinks`, `coordinate_sinks`, `drop_sinks` |
 | [Configuration](config.md) | `PipelineConfig`, `StopParams`, `ClusterParams`, `HomeWorkParams`, `TrajectoryParams` |
 | [Input and sharding](io.md) | `read_pings`, `shard_expr` |
 | [Engine](engine.md) | `cuda_available`, `configure_gpu`, `collect` |

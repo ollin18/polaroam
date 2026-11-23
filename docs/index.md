@@ -10,7 +10,7 @@ hide:
 # Mobility pings to stays, trips and homes
 
 <p class="pr-lead">PolaRoam turns raw location pings (LBS / GPS) into <b>stays</b>, <b>trajectories with
-speeds and transport mode</b>, recurrent <b>places</b> and <b>home / work</b> locations, using pure,
+speeds and transport mode</b> matched to the streets, <b>routines</b>, recurrent <b>places</b> and <b>home / work</b> locations, using pure,
 vectorized <a href="https://pola.rs">Polars</a>. All at once or day by day, on CPU or CUDA,
 with the same results as the gc-lbs BigQuery pipeline.</p>
 
@@ -61,6 +61,24 @@ with the same results as the gc-lbs BigQuery pipeline.</p>
     transparent walk / bike / motorized baseline.
 
     [:octicons-arrow-right-24: Speed and mode](guide/speed-and-mode.md)
+
+-   :material-road-variant:{ .lg .middle } **Map matching**
+
+    ---
+
+    Trajectories snapped to the streets of each mode's network (OpenStreetMap or your own),
+    and trips per street segment.
+
+    [:octicons-arrow-right-24: Map matching](guide/map-matching.md)
+
+-   :material-repeat:{ .lg .middle } **Routines and trip completion**
+
+    ---
+
+    Trips repeated between the same places give a mode to trips without one, and complete
+    partial trips along the streets the device uses on other days.
+
+    [:octicons-arrow-right-24: Routines](guide/routines.md)
 
 -   :material-home-city:{ .lg .middle } **Places, home and work**
 
