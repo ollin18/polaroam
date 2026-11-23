@@ -264,6 +264,9 @@ The 90,493 routine trips belong to 15,419 routines of 7,216 devices.
   the streets of the routine's other trips recovered 51% of the hidden route with 70% precision,
   against 35% and 51% for the plain shortest path.
 
+![Three partial trips completed along the device's usual streets, and the hold-out test](../assets/figures/cdmx_routines_light.png#only-light)
+![Three partial trips completed along the device's usual streets, and the hold-out test](../assets/figures/cdmx_routines_dark.png#only-dark)
+
 Matching the 72,867 routine trajectories took 53 s and completing the trips 37 s; the whole
 script peaked at 10 GB.
 

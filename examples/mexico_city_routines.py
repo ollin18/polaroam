@@ -21,7 +21,13 @@ import json
 import time
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import polars as pl
+import shapely
+from make_figures import THEMES, merc, style
+from matplotlib.collections import LineCollection
+from mexico_city_figures import blend
 
 import polaroam as pr
 from polaroam.geo import haversine
@@ -53,6 +59,129 @@ def overlap(pred: pl.DataFrame, truth: pl.DataFrame) -> pl.DataFrame:
                                pl.col("t").sum().alias("t"))
 
 
+def lines(net, edges):
+    xy, idx = shapely.get_coordinates(net._geoms[np.asarray(edges)], return_index=True)
+    x, y = merc(xy[:, 0], xy[:, 1])
+    return np.split(np.column_stack([x, y]), np.flatnonzero(np.diff(idx)) + 1)
+
+
+def pick(c: pl.DataFrame, n: int = 3) -> pl.DataFrame:
+    """Partial motorized trips with a well-supported imputation, from different routines."""
+    return (c.filter((pl.col("state") == "partial") & (pl.col("mode") == "motorized") & (pl.col("n_parts") == 1)
+                     & (pl.col("route_trips") >= 3) & pl.col("imputed_share").is_between(0.35, 0.75)
+                     & (pl.col("imputed_on_route") >= 0.8) & pl.col("length_m").is_between(6000, 12000)
+                     & (pl.col("observed_m") + pl.col("imputed_m") < 1.6 * pl.col("distance_m")))
+            .sort("uid", "trip_id").sample(n=n, seed=3))
+
+
+def draw_trip(ax, net, trip, edges, routes, pts, t, clip_m=1000.0):
+    """One trip, without its first and last ``clip_m`` (no stays, no basemap: nobody's places)."""
+    e = edges.sort("seq").with_columns((pl.col("to_m") - pl.col("from_m")).cum_sum().alias("_c"))
+    total = e["_c"][-1]
+    keep = e.filter((pl.col("_c") > clip_m) & (pl.col("_c") < total - clip_m))
+    xy = np.concatenate(lines(net, keep["edge"]))
+    pad = 350
+    x0, x1, y0, y1 = xy[:, 0].min() - pad, xy[:, 0].max() + pad, xy[:, 1].min() - pad, xy[:, 1].max() + pad
+    # square view
+    cx, cy, h = (x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, y1 - y0) / 2
+    x0, x1, y0, y1 = cx - h, cx + h, cy - h, cy + h
+    b = shapely.bounds(net._geoms)
+    lon0, lat0 = merc_inv(x0, y0)
+    lon1, lat1 = merc_inv(x1, y1)
+    near = np.flatnonzero((b[:, 2] >= lon0) & (b[:, 0] <= lon1) & (b[:, 3] >= lat0) & (b[:, 1] <= lat1))
+    ax.add_collection(LineCollection(lines(net, near), colors=t["grid"], linewidths=0.6, zorder=1))
+    own = edges.filter(~pl.col("imputed")).select("edge").unique().with_columns(pl.lit(1).alias("_own"))
+    other = (routes.filter((pl.col("routine_id") == trip["routine_id"]) & (pl.col("mode") == trip["mode"]))
+             .join(own, on="edge", how="left")
+             .with_columns((pl.col("trips") - pl.col("_own").fill_null(0)).alias("n")).filter(pl.col("n") > 0))
+    full = np.concatenate(lines(net, e["edge"]))
+    ends = np.array([full[0], full[-1]])
+    if other.height:  # never near the trip's ends
+        mid = shapely.get_coordinates(shapely.line_interpolate_point(net._geoms[other["edge"].to_numpy()], 0.5,
+                                                                     normalized=True))
+        mx, my = merc(mid[:, 0], mid[:, 1])
+        other = other.filter(pl.Series(np.hypot(mx[:, None] - ends[:, 0], my[:, None] - ends[:, 1]).min(axis=1)
+                                       > clip_m))
+    if other.height:
+        ax.add_collection(LineCollection(lines(net, other["edge"]), colors=blend(t["series"][2], t["surface"], 0.62),
+                                         linewidths=4 + 2.5 * other["n"].to_numpy() / other["n"].max(), zorder=2,
+                                         capstyle="butt", joinstyle="round"))
+    for imp, color, ls in ((False, t["series"][0], "-"), (True, t["series"][1], (0, (2.2, 1.6)))):
+        k = keep.filter(pl.col("imputed") == imp)
+        if k.height:
+            ax.add_collection(LineCollection(lines(net, k["edge"]), colors=color, linewidths=2.0, linestyles=ls,
+                                             zorder=3, capstyle="round"))
+    # the trip's pings, away from its ends (the stays)
+    px, py = merc(pts["longitude"].to_numpy(), pts["latitude"].to_numpy())
+    far = np.hypot(px[:, None] - ends[:, 0], py[:, None] - ends[:, 1]).min(axis=1) > clip_m
+    ok = far & (px > x0) & (px < x1) & (py > y0) & (py < y1)
+    ax.scatter(px[ok], py[ok], s=9, color=t["ink"], edgecolor=t["surface"], linewidth=0.6, zorder=4)
+    ax.set_xlim(x0, x1), ax.set_ylim(y0, y1), ax.set_aspect("equal")
+    ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_title(f"{trip['length_m'] / 1000:.1f} km · {trip['imputed_share']:.0%} imputed · "
+                 f"{trip['route_trips']} other days", fontsize=10.5, fontweight="normal", color=t["ink2"])
+
+
+def merc_inv(x, y):
+    R = 6378137.0
+    return np.degrees(x / R), np.degrees(2 * np.arctan(np.exp(y / R)) - np.pi / 2)
+
+
+def draw_holdout(ax, ho: pl.DataFrame, t):
+    h = ho.filter(pl.col("mode") == "all").sort("preference")
+    x = h["preference"].to_numpy()
+    for col, label, color in (("precision", "Imputed route correct (precision)", t["series"][0]),
+                              ("recall", "Hidden route recovered (recall)", t["series"][1])):
+        y = h[col].to_numpy() * 100
+        ax.plot(x, y, color=color, lw=2, marker="o", ms=6, mec=t["surface"], mew=1.5)
+        ax.annotate(label, (x[-1], y[-1]), xytext=(0, 9), textcoords="offset points", ha="right",
+                    fontsize=9.5, color=t["ink2"])
+        for xi, yi in ((x[0], y[0]), (x[2], y[2])):
+            ax.annotate(f"{yi:.0f}%", (xi, yi), xytext=(0, -15), textcoords="offset points", ha="center",
+                        fontsize=9, color=t["ink"])
+    ax.set_xticks(x, [f"{v:g}" + (" (shortest path)" if v == 0 else " (default)" if v == 0.7 else "") for v in x],
+                  fontsize=8.5)
+    ax.set_xlim(-0.08, 0.98), ax.set_ylim(20, 85)
+    ax.set_ylabel("% of route length")
+    ax.set_xlabel("preference for the routine's streets")
+    ax.set_title(f"Hold-out: {h['trips'][0]:,} trips, middle 60% of pings removed", fontsize=10.5,
+                 fontweight="normal", color=t["ink2"])
+
+
+def figures(work: Path, nets, out: str):
+    c = pl.read_parquet(work / "completed_trips.parquet")
+    edges = pl.read_parquet(work / "completed_edges.parquet")
+    routes = pl.read_parquet(work / "routes.parquet")
+    ho = pl.read_parquet(work / "holdout.parquet")
+    trips = pl.read_parquet(work / "trips.parquet")
+    pts = pl.scan_parquet(work / "matched" / "points" / "*.parquet")
+    chosen = pick(c.join(trips.select("uid", "trip_id", "distance_m"), on=["uid", "trip_id"]))
+    for name, t in THEMES.items():
+        style(t)
+        fig, axes = plt.subplots(2, 2, figsize=(11, 11.6))
+        fig.subplots_adjust(left=0.03, right=0.98, top=0.9, bottom=0.06, wspace=0.12, hspace=0.16)
+        for ax, trip in zip(axes.flat[:3], chosen.iter_rows(named=True)):
+            e = edges.filter((pl.col("uid") == trip["uid"]) & (pl.col("trip_id") == trip["trip_id"]))
+            tid = trips.filter((pl.col("uid") == trip["uid"]) & (pl.col("trip_id") == trip["trip_id"]))
+            ids = tid["trajectory_ids"][0].to_list()
+            p = pts.filter((pl.col("uid") == trip["uid"]) & pl.col("trajectory_id").is_in(ids)).collect()
+            draw_trip(ax, nets["motorized"], trip, e, routes, p, t)
+        draw_holdout(axes.flat[3], ho, t)
+        fig.suptitle("Completing partial trips along the device's usual streets", x=0.03, ha="left",
+                     fontsize=13, fontweight="bold", color=t["ink"], y=0.985)
+        handles = [plt.Line2D([], [], color=t["series"][0], lw=2, label="observed route"),
+                   plt.Line2D([], [], color=t["series"][1], lw=2, ls=(0, (2.2, 1.6)), label="imputed route"),
+                   plt.Line2D([], [], color=blend(t["series"][2], t["surface"], 0.62), lw=6, label="streets seen on other days"),
+                   plt.Line2D([], [], color=t["ink"], marker="o", ls="", ms=4, label="pings")]
+        fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.025, 0.955), ncol=4, fontsize=9.5)
+        fig.text(0.98, 0.012, "Three motorized trips from the Mexico City sample, without their first and last km. "
+                 "Streets © OpenStreetMap contributors (ODbL)", ha="right", fontsize=8, color=t["muted"])
+        fig.savefig(f"{out}/cdmx_routines_{name}.png", dpi=150)
+        plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("output_dir")
@@ -60,10 +189,15 @@ def main():
     ap.add_argument("--sample", required=True, help="full-resolution trajectories (mexico_city_matching.py)")
     ap.add_argument("--work", default="examples/output/routines")
     ap.add_argument("--out", default="docs/assets/figures")
+    ap.add_argument("--figures-only", action="store_true", help="redraw the figure from the saved results")
     a = ap.parse_args()
     work = Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
     stats = {}
+    if a.figures_only:
+        nets = {"motorized": pr.RoadNetwork(pl.read_parquet(f"{a.osm}/drive.parquet"), directed=True)}
+        figures(work, nets, a.out)
+        return
 
     t0 = time.time()
     tr = pl.read_parquet(a.sample)
@@ -72,6 +206,7 @@ def main():
              .join(uids.lazy(), on="uid", how="semi").collect())
     trips = pr.find_routines(pr.stay_trips(stays, tr, timezone=TZ))
     tm = pr.routine_modes(tr, trips)
+    trips.write_parquet(work / "trips.parquet")
     print(f"{trips.height:,} trips from {uids.height:,} devices ({time.time() - t0:.0f}s)")
     inr = trips.filter(pl.col("routine_id").is_not_null())
     stats["trips"] = trips.height
@@ -137,6 +272,7 @@ def main():
     ho_tab.write_parquet(work / "holdout.parquet")
     stats["holdout"] = ho_tab.to_dicts()
     (work / "stats.json").write_text(json.dumps(stats, indent=1, default=str))
+    figures(work, nets, a.out)
 
 
 if __name__ == "__main__":

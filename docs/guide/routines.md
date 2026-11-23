@@ -118,6 +118,13 @@ completed again, and the imputed stretch compared with the route matched from al
 | **0.7 (default)** | **51%** | **70%** |
 | 0.9 | 51% | 70% |
 
+![Three partial trips completed along the device's usual streets, and the hold-out test](../assets/figures/cdmx_routines_light.png#only-light)
+![Three partial trips completed along the device's usual streets, and the hold-out test](../assets/figures/cdmx_routines_dark.png#only-dark)
+
+Three partial motorized trips (without their first and last kilometre): observed stretches in
+blue, imputed ones dashed, following the streets the same device was seen on during other days
+of the routine (green).
+
 Following the device's own streets recovers about half again as much of the hidden route as
 the shortest path does. Most test trips were motorized (1,615; walk 252, bike 22): treat the
 walk and bike numbers (44% and 67% recall at 0.7) as indicative.
