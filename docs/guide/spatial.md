@@ -103,7 +103,8 @@ and the default reproduces gc-lbs exactly.
     `sinks.parquet`, and reused by every later batch. This keeps the result independent of
     later batching, but one day of data finds far fewer sinks than a month: in Mexico City, one
     day (2022-12-05) has 92 coordinates with ≥ 5,000 devices, the whole month 2,586. For daily
-    runs, run `find_sinks` on a longer period first and pass the file.
+    runs, run `find_sinks` on a longer period first and pass the file; `update()` warns when
+    `remove_sinks=True` has to find the sinks in its first batch.
 
 !!! note "Nothing found?"
     The threshold is absolute. On small data (the 500-device example, a sample), no coordinate

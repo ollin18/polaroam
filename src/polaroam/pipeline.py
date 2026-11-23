@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import shutil
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,6 +66,7 @@ class Pipeline:
     def __init__(self, output_dir: str | Path, config: PipelineConfig | None = None, *,
                  trajectories: bool = False, use_cuda: bool = False, verbose: bool = True):
         self.dir = Path(output_dir)
+        self._one_shot = False
         self.use_cuda = use_cuda
         self.verbose = verbose
         manifest = self._read_manifest()
@@ -88,7 +90,11 @@ class Pipeline:
             if not overwrite:
                 raise FileExistsError(f"{self.dir} already holds a pipeline; pass overwrite=True.")
             self.reset()
-        return self.update(pings, batch_id="all", flush=True, column_map=column_map)
+        self._one_shot = True  # all the data in one batch: remove_sinks=True sees everything
+        try:
+            return self.update(pings, batch_id="all", flush=True, column_map=column_map)
+        finally:
+            self._one_shot = False
 
     def update(self, pings: PingSource, *, batch_id: str | None = None, flush: bool = False,
                compute_home_work: bool = True, column_map: dict[str, str] | None = None) -> BatchSummary:
@@ -234,6 +240,13 @@ class Pipeline:
         f = self.dir / "sinks.parquet"
         if f.exists():
             return pl.read_parquet(f)
+        if not self._one_shot:
+            warnings.warn(
+                "remove_sinks=True in an incremental run finds the coordinate sinks in this first batch "
+                f"({batch_id}) only and reuses them for every later batch. One batch sees far fewer sinks "
+                "than a longer period (one day of Mexico City: 92; the whole month: 2,586). Build the list "
+                "from at least a week with polaroam.find_sinks(...).write_parquet('sinks.parquet') and pass "
+                "remove_sinks='sinks.parquet'.", UserWarning, stacklevel=3)
         t = time.time()
         sinks = sink_table(True, lf, cfg.sinks_min_devices)
         self.dir.mkdir(parents=True, exist_ok=True)

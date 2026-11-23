@@ -93,7 +93,8 @@ def test_incremental_reuses_first_batch_sinks(dirty, tmp_path):
     real = ~((pl.col("latitude") == SINK[0]) & (pl.col("longitude") == SINK[1]))
     last = pl.col("timestamp").filter(real).max().over("uid")
     first, second = dirty.filter(pl.col("timestamp") <= last), dirty.filter(pl.col("timestamp") > last)
-    pipe.update(first, batch_id="1")
+    with pytest.warns(UserWarning, match="incremental run"):
+        pipe.update(first, batch_id="1")
     f = tmp_path / "inc" / "sinks.parquet"
     found, mtime = pl.read_parquet(f), f.stat().st_mtime_ns
     assert found.select("latitude", "longitude").rows() == [SINK]
@@ -120,6 +121,7 @@ def test_cli_remove_sinks(dirty, tmp_path):
     dirty.write_parquet(src)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
+        # one-shot run: sees all the data, so no warning
         assert main(["run", str(src), str(tmp_path / "out"), "--remove-sinks", "--sinks-min-devices", str(MIN)]) == 0
     assert pl.read_parquet(tmp_path / "out" / "sinks.parquet").select("latitude", "longitude").rows() == [SINK]
     assert main(["sinks", str(src), str(tmp_path / "s.parquet"), "--min-devices", str(MIN)]) == 0
