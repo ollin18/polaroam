@@ -187,8 +187,9 @@ class RoadNetwork:
                 .group_by("un", "vn", maintain_order=True).first())
         self._link = best.select(pl.col("un").cast(pl.Int64), pl.col("vn").cast(pl.Int64), "edge")
         n = nodes.height
-        self._graph = (*csr(n, best["un"].to_numpy().astype(np.int64), best["vn"].to_numpy().astype(np.int64),
-                            best["length_m"].to_numpy()), n)
+        un = best["un"].to_numpy().astype(np.int64)
+        self._graph = (*csr(n, un, best["vn"].to_numpy().astype(np.int64), best["length_m"].to_numpy()), n)
+        self._arc_edge = best["edge"].to_numpy()[np.argsort(un, kind="stable")].astype(np.int64)  # edge per CSR arc
         self._index_cache: dict[float, tuple] = {}
 
     def _index(self, radius: float):

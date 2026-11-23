@@ -29,6 +29,7 @@ from .local_time import (
 from .pipeline import Pipeline
 from .quality import coordinate_sinks, drop_sinks, find_sinks
 from .roads import MatchParams, MatchResult, RoadNetwork, edge_volumes, match_trajectories
+from .routines import CompletionResult, complete_trips, find_routines, routine_modes, stay_trips
 from .stops import StopDetector, StopState, detect_stops
 from .trajectories import build_trajectories, douglas_peucker, extract_trajectories, guess_mode, speed_features
 
@@ -38,6 +39,7 @@ __version__ = "0.3.0"
 __all__ = [
     "ClusterParams",
     "ClusterState",
+    "CompletionResult",
     "HomeWorkParams",
     "IncrementalDBSCAN",
     "MatchParams",
@@ -55,6 +57,7 @@ __all__ = [
     "builtin_timezones",
     "classify_home_work",
     "cluster_stops",
+    "complete_trips",
     "configure_gpu",
     "connected_components",
     "coordinate_sinks",
@@ -64,6 +67,7 @@ __all__ = [
     "drop_sinks",
     "edge_volumes",
     "extract_trajectories",
+    "find_routines",
     "find_sinks",
     "guess_mode",
     "h3_cells",
@@ -74,8 +78,10 @@ __all__ = [
     "lookup_timezones",
     "match_trajectories",
     "read_pings",
+    "routine_modes",
     "shard_expr",
     "speed_features",
+    "stay_trips",
     "suggest_timezone",
     "timezone_table",
 ]

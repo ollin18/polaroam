@@ -240,6 +240,33 @@ What this says:
 The comparison is indicative: 2017 vs December 2022, reported trips vs app-location
 trajectories.
 
+## Routines
+
+The [routines](../guide/routines.md) of the map-matching sample (60,000 devices, every ping):
+
+| | Trips | Share |
+|---|---|---|
+| All trips between stays ≥ 200 m apart | 436,622 | |
+| observed from stay to stay (`complete`) | 37,660 | 8.6% |
+| observed in part (`partial`) | 153,167 | 35.1% |
+| not observed (`empty`) | 245,795 | 56.3% |
+| **in a routine** (same two places on ≥ 3 days) | **90,493** | **20.7%** |
+
+The 90,493 routine trips belong to 15,419 routines of 7,216 devices.
+
+- **Mode.** 14,947 trips without a mode of their own got their routine's (10,643 motorized,
+  3,951 walk, 353 bike). Most of them had no pings at all, so only 3,022 trajectories changed
+  from `unknown`.
+- **Completion.** 46,753 routine trips with a mode were completed on their mode's network
+  (`fill_empty=True`): 25,510 partial, 9,077 complete, 12,166 empty. 83–90% came out in one
+  piece. Imputed stretches make up a median 73% of a partial trip's route.
+- **Hold-out.** On 1,889 complete trips with the middle 60% of their pings removed, preferring
+  the streets of the routine's other trips recovered 51% of the hidden route with 70% precision,
+  against 35% and 51% for the plain shortest path.
+
+Matching the 72,867 routine trajectories took 53 s and completing the trips 37 s; the whole
+script peaked at 10 GB.
+
 ## How trajectories were fixed along the way
 
 Two artifacts were found in this data and fixed in the library:
@@ -285,6 +312,8 @@ python examples/download_osm.py /data/osm/cdmx                          # OpenSt
 python examples/mexico_city_matching.py /data/out/MX_2022_12 --osm /data/osm/cdmx \
     --pings "/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet" --sinks mx_sinks.parquet \
     --timestamp-column utc_date
+python examples/mexico_city_routines.py /data/out/MX_2022_12 --osm /data/osm/cdmx \
+    --sample examples/output/matching/sample_60000.parquet
 python examples/mexico_city_validation.py /data/out/MX_2022_12 \
     --eod eod_2017_csv/tviaje_eod2017/conjunto_de_datos/tviaje.csv --districts DistritosEODHogaresZMVM2017.shp
 ```
