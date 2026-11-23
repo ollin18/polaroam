@@ -24,7 +24,7 @@ import shapely
 from make_figures import THEMES, merc, style
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap, LogNorm
-from mexico_city_figures import MAP_BG, MAP_LINE, blend, extent, inside, outline
+from mexico_city_figures import MAP_BG, MAP_LINE, blend, extent, grid_mask, inside, outline, vertex_density
 
 import polaroam as pr
 
@@ -74,42 +74,84 @@ def segments(net: pr.RoadNetwork, edges: np.ndarray):
     return np.split(np.column_stack([x, y]), cut)
 
 
-def fig_matched(nets, vols, counts, t, path):
+def bare(ax, t):
     x0, x1, y0, y1 = extent()
-    # panels in the city's proportions, side by side
-    width, top, bottom, gap = 16.0, 0.885, 0.035, 0.012
+    ax.set_xlim(x0, x1), ax.set_ylim(y0, y1), ax.set_aspect("equal")
+    outline(ax, t, lw=0.8, color=MAP_LINE)
+    ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
+    for s in ax.spines.values():
+        s.set_visible(False)
+
+
+def ramp(mode, color):
+    """Quiet in a dark shade of the mode's hue, the busiest in white."""
+    return LinearSegmentedColormap.from_list(mode, [
+        (0.0, blend(color, MAP_BG, 0.7)), (0.45, color), (0.82, blend(color, "#ffffff", 0.55)), (1.0, "#ffffff")])
+
+
+def draw_matched(ax, net, v, mode, color, t):
+    """Trajectories per street segment, on the faint network."""
+    ax.set_facecolor(MAP_BG)
+    mid = shapely.get_coordinates(shapely.line_interpolate_point(net._geoms, 0.5, normalized=True))
+    base = np.flatnonzero(inside(mid[:, 0], mid[:, 1]))
+    ax.add_collection(LineCollection(segments(net, base), colors="#34342f", linewidths=0.15))
+    v = v.filter(pl.Series(inside(*shapely.get_coordinates(shapely.line_interpolate_point(
+        net._geoms[v["edge"].to_numpy()], 0.5, normalized=True)).T))).sort("trajectories")
+    n = v["trajectories"].to_numpy().astype(float)
+    vmax = max(n.max(), 2)
+    f = np.clip(np.log(n) / np.log(vmax), 0, 1)
+    ax.add_collection(LineCollection(segments(net, v["edge"].to_numpy()),
+                                     colors=ramp(mode, color)(LogNorm(vmin=1, vmax=vmax)(n)),
+                                     linewidths=0.12 + 1.1 * f ** 2))
+    bare(ax, t)
+
+
+def draw_density(ax, coords, mode, color, t, bins=900):
+    """Heat map of the observed positions (trajectory vertices), as on the trajectory maps."""
+    h = vertex_density(coords, bins)
+    x0, x1, y0, y1 = extent()
+    ax.set_facecolor(MAP_BG)
+    mm = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
+    ax.imshow(mm, extent=(x0, x1, y0, y1), origin="lower", cmap=ramp(mode, color), interpolation="antialiased",
+              norm=LogNorm(vmin=1, vmax=max(np.percentile(h[h > 0], 99.5), 2)))
+    bare(ax, t)
+
+
+def figure(rows, t):
+    x0, x1, y0, y1 = extent()
+    width, top, bottom, gap = 16.0, 1 - 0.11 / rows, 0.035 / rows, 0.012
     panel_w = width * (1 - 2 * gap) / 3
-    height = panel_w * (y1 - y0) / (x1 - x0) / (top - bottom)
-    fig, axes = plt.subplots(1, 3, figsize=(width, height))
-    fig.subplots_adjust(left=0.004, right=0.996, wspace=0.03, top=top, bottom=bottom)
-    for ax, mode, color in zip(axes, NETWORKS, t["series"]):
-        net, v = nets[mode], vols[mode]
-        ax.set_facecolor(MAP_BG)
-        # the whole network, faint, inside the city
-        mid = shapely.get_coordinates(shapely.line_interpolate_point(net._geoms, 0.5, normalized=True))
-        base = np.flatnonzero(inside(mid[:, 0], mid[:, 1]))
-        ax.add_collection(LineCollection(segments(net, base), colors="#34342f", linewidths=0.15))
-        v = v.filter(pl.Series(inside(*shapely.get_coordinates(shapely.line_interpolate_point(
-            net._geoms[v["edge"].to_numpy()], 0.5, normalized=True)).T))).sort("trajectories")
-        n = v["trajectories"].to_numpy().astype(float)
-        vmax = max(n.max(), 2)
-        # quiet streets in a dark shade of the mode's hue, the busiest in white
-        cmap = LinearSegmentedColormap.from_list(mode, [
-            (0.0, blend(color, MAP_BG, 0.7)), (0.45, color), (0.82, blend(color, "#ffffff", 0.55)), (1.0, "#ffffff")])
-        norm = LogNorm(vmin=1, vmax=vmax)
-        f = np.clip(np.log(n) / np.log(vmax), 0, 1)
-        lw = 0.12 + 1.1 * f ** 2
-        ax.add_collection(LineCollection(segments(net, v["edge"].to_numpy()), colors=cmap(norm(n)), linewidths=lw))
-        ax.set_xlim(x0, x1), ax.set_ylim(y0, y1), ax.set_aspect("equal")
-        outline(ax, t, lw=0.8, color=MAP_LINE)
-        ax.set_xticks([]), ax.set_yticks([]), ax.grid(False)
-        for s in ax.spines.values():
-            s.set_visible(False)
+    height = rows * panel_w * (y1 - y0) / (x1 - x0) / (top - bottom) * 1.04
+    fig, axes = plt.subplots(rows, 3, figsize=(width, height), squeeze=False)
+    fig.subplots_adjust(left=0.004, right=0.996, wspace=0.03, hspace=0.07, top=top, bottom=bottom)
+    return fig, axes
+
+
+def fig_matched(nets, vols, counts, t, path):
+    fig, axes = figure(1, t)
+    for ax, mode, color in zip(axes[0], NETWORKS, t["series"]):
+        draw_matched(ax, nets[mode], vols[mode], mode, color, t)
         ax.set_title(f"{mode} · {counts[mode]:,} trajectories", color=t["ink"], fontsize=12, loc="left")
     fig.suptitle("Trajectories matched to the streets, each mode on its OpenStreetMap network "
                  "(walk, bike, drive): trajectories per street segment, log scale",
                  x=0.006, y=0.985, ha="left", fontsize=12.5, fontweight="bold", color=t["ink"])
     fig.text(0.995, 0.005, "Streets © OpenStreetMap contributors (ODbL)", ha="right", va="bottom",
+             fontsize=8, color=t["muted"])
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def fig_compare(tr, nets, vols, counts, t, path):
+    """Same trajectories: heat map of their raw positions (top) vs matched streets (bottom)."""
+    fig, axes = figure(2, t)
+    for j, (mode, color) in enumerate(zip(NETWORKS, t["series"])):
+        draw_density(axes[0, j], tr.filter(pl.col("mode_guess") == mode)["coordinates"], mode, color, t)
+        axes[0, j].set_title(f"{mode} · heat map of the raw positions", color=t["ink"], fontsize=12, loc="left")
+        draw_matched(axes[1, j], nets[mode], vols[mode], mode, color, t)
+        axes[1, j].set_title(f"{mode} · matched to the streets", color=t["ink"], fontsize=12, loc="left")
+    fig.suptitle("Before and after map matching: the same trajectories (a random 4% of the devices), "
+                 "log scale", x=0.006, y=0.993, ha="left", fontsize=12.5, fontweight="bold", color=t["ink"])
+    fig.text(0.995, 0.003, "Streets © OpenStreetMap contributors (ODbL)", ha="right", va="bottom",
              fontsize=8, color=t["muted"])
     fig.savefig(path, dpi=150)
     plt.close(fig)
@@ -152,6 +194,7 @@ def main():
         counts[m] = res.trajectories.filter((pl.col("mode_guess") == m) & (pl.col("n_parts") > 0)).height
     style(THEMES["light"])  # one image for both site themes: white page, dark map panel
     fig_matched(nets, vols, counts, THEMES["light"], f"{a.out}/cdmx_matched.png")
+    fig_compare(tr, nets, vols, counts, THEMES["light"], f"{a.out}/cdmx_matched_vs_raw.png")
 
 
 if __name__ == "__main__":

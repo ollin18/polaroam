@@ -137,6 +137,13 @@ because their pings are minutes apart. The rest look plausible:
     `straightness`, `length_m` and `frac_slow` to separate real walks, or train a model on these
     features with labeled trips.
 
+!!! warning "`bike` is not only cycling"
+    Against the official Origin-Destination Survey of Mexico City, `bike` is 22.5% of the LBS
+    trips but only 1.6% of surveyed trips. Speeds of 8–22 km/h are also those of
+    congested traffic and buses, so in a congested city most of this class is likely
+    motorized. `motorized`, by contrast, matches the survey's share and geography well
+    ([the comparison](../examples/mexico-city.md#checked-against-the-official-survey)).
+
 ## Parameters
 
 | Parameter | Default | Meaning |

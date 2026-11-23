@@ -80,6 +80,20 @@ polaroam run raw out --timezone America/Mexico_City --timestamp-unit us
 `timestamp_timezone` says how to *read* times without a timezone; `timezone` is where the stays
 *are*, for local hours and weekdays ([local time](local-time.md)). They are often the same.
 
+!!! warning "Unix times that are really local time"
+    Some exports write the *local* wall-clock time as if it were a Unix time. polaroam reads Unix
+    times as UTC, so every local time (home and work hours, weekdays, start hours) would be shifted
+    by the UTC offset; stays, trajectories and speeds are not affected. Check one row against a
+    column you trust: in the Mexico City quadrant data, `timestamp = 1670275719` reads as
+    21:28:39, which is the local `date`, while `utc_date` is 03:28:39 the next day. Use the UTC
+    column instead:
+
+    ```python
+    cfg = pr.PipelineConfig(timezone="America/Mexico_City", column_map={"timestamp": "utc_date"})
+    ```
+
+    A quick symptom: pings per local hour that peak around noon and stay high all night.
+
 !!! tip "Seconds before 1973"
     Automatic detection reads a value below 10¹¹ as seconds. Data starting at the epoch
     (`0`, `5`, `6`... milliseconds, as in synthetic tests) needs `timestamp_unit="ms"`.
