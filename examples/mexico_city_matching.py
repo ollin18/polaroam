@@ -31,14 +31,23 @@ import polaroam as pr
 NETWORKS = {"walk": "walk", "bike": "bike", "motorized": "drive"}
 
 
-def sample_trajectories(out: str, pings: str, sinks: str | None, n_devices: int, path: Path) -> pl.DataFrame:
+def sample_trajectories(out: str, pings: str, sinks: str | None, n_devices: int, path: Path,
+                        column_map: dict | None = None) -> pl.DataFrame:
     if path.exists():
         return pl.read_parquet(path)
     traj = pl.scan_parquet(glob.glob(f"{out}/trajectories/**/shard=*.parquet", recursive=True))
-    uids = traj.select("uid").unique().collect().sample(n=n_devices, seed=1)["uid"].implode()
+    uids = traj.select("uid").unique().collect().sort("uid").sample(n=n_devices, seed=1)["uid"]
     stops = pl.scan_parquet(glob.glob(f"{out}/stops/**/shard=*.parquet", recursive=True))
     t = time.time()
-    tr = pr.extract_trajectories(pr.read_pings(pings).filter(pl.col("uid").is_in(uids)),
+    # Filter the devices on the raw id column, in its own type, *before* polaroam reads the pings:
+    # converting 1.66B ids to text and then filtering took ~100 GB; this takes ~8 GB.
+    raw = pr.io.scan(pings)
+    names = raw.collect_schema()
+    id_col = pr.io.resolve_columns(names.names(), column_map)["uid"]
+    raw = raw.filter(pl.col(id_col).is_in(uids.cast(names[id_col]).implode()))
+    uids = uids.implode()
+    # read the pings exactly as the pipeline run did (same columns), so they line up with its stays
+    tr = pr.extract_trajectories(pr.read_pings(raw, column_map),
                                  stops.filter(pl.col("uid").is_in(uids)).collect(),
                                  simplify_tolerance=0, min_pings=2, min_length_m=100, remove_sinks=sinks or False)
     tr.write_parquet(path)
@@ -166,6 +175,7 @@ def main():
     ap.add_argument("--osm", required=True, help="directory with drive/bike/walk.parquet (examples/download_osm.py)")
     ap.add_argument("--pings", required=True)
     ap.add_argument("--sinks")
+    ap.add_argument("--timestamp-column", help="column with the UTC time, if not `timestamp` (quadrant data: utc_date)")
     ap.add_argument("--devices", type=int, default=60_000)
     ap.add_argument("--work", default="examples/output/matching")
     ap.add_argument("--out", default="docs/assets/figures")
@@ -173,7 +183,8 @@ def main():
     a = ap.parse_args()
     work = Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
-    tr = sample_trajectories(a.output_dir, a.pings, a.sinks, a.devices, work / f"sample_{a.devices}.parquet")
+    cm = {"timestamp": a.timestamp_column} if a.timestamp_column else None
+    tr = sample_trajectories(a.output_dir, a.pings, a.sinks, a.devices, work / f"sample_{a.devices}.parquet", cm)
     nets = {m: pr.RoadNetwork(pl.read_parquet(f"{a.osm}/{k}.parquet"), directed=True) for m, k in NETWORKS.items()}
     for m, net in nets.items():
         print(m, net)

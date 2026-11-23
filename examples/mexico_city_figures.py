@@ -92,7 +92,7 @@ def hot_cmap():
     return ListedColormap(matplotlib.colormaps["inferno"](np.linspace(0.18, 1.0, 256)), name="hot")
 
 
-MODE_COLS = ["speed_p85_kmh", "speed_max_kmh", "duration", "n_pings", "ping_gap_median_s", "length_m"]
+MODE_COLS = ["speed_p85_kmh", "speed_p85_robust_kmh", "speed_max_kmh", "duration", "n_pings", "ping_gap_median_s", "length_m"]
 
 
 def vertex_density(coords: pl.Series, bins: int):

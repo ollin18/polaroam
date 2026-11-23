@@ -219,11 +219,11 @@ def fig_mode_features(tr, hw, t, out):
     for m in MODES:
         x = d.filter(pl.col("mode_guess") == m)["speed_p85_kmh"].to_numpy()
         ax.hist(x, bins=bins, histtype="step", lw=2, color=cl[m], label=f"{m} ({len(x):,})")
-    for thr, lab in [(8, "8 km/h"), (22, "22 km/h")]:
-        ax.axvline(thr, color=t["muted"], lw=1, ls="--")
-        ax.text(thr * 1.05, ax.get_ylim()[1] * 0.93, lab, color=t["ink2"], fontsize=8)
+    # motorized is decided on these short windows (>= 22 km/h); walk vs bike on the robust speed
+    ax.axvline(22, color=t["muted"], lw=1, ls="--")
+    ax.text(22 * 1.05, ax.get_ylim()[1] * 0.93, "22 km/h: motorized", color=t["ink2"], fontsize=8)
     ax.set_xscale("log"), ax.set_xticks([1, 3, 10, 30, 100], ["1", "3", "10", "30", "100"])
-    ax.set_xlabel("cruising speed, p85 (km/h)"), ax.set_ylabel("trajectories")
+    ax.set_xlabel("cruising speed, p85 over 30 s windows (km/h)"), ax.set_ylabel("trajectories")
     ax.set_title("Cruising speed separates the modes"), ax.legend(loc="upper left", fontsize=9)
 
     ax = axes[0, 1]

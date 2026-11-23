@@ -5,8 +5,8 @@ simplification), plus a transparent baseline guess of the transport mode.
 
 ```python
 trips.select(
-    "speed_mean_kmh", "speed_median_kmh", "speed_p85_kmh", "speed_max_kmh", "speed_cv",
-    "frac_slow", "straightness", "ping_gap_median_s", "n_jumps", "mode_guess",
+    "speed_mean_kmh", "speed_median_kmh", "speed_p85_kmh", "speed_p85_robust_kmh", "speed_max_kmh",
+    "speed_cv", "frac_slow", "straightness", "ping_gap_median_s", "n_jumps", "mode_guess",
 )
 ```
 
@@ -47,6 +47,7 @@ With \(W = \sum_i w_i\) over the valid windows:
 | `speed_mean_kmh` | \(\bar v = \sum_i w_i v_i / W\) | overall pace |
 | `speed_median_kmh` | the \(v\) at which half of \(W\) is slower | typical speed, lowered by stops |
 | `speed_p85_kmh` | the \(v\) at which 85% of \(W\) is slower | **cruising speed**: the best single separator |
+| `speed_p85_robust_kmh` | the same, over windows of at least `speed_window_pings` (3) median ping gaps | cruising speed that ignores hops between noisy fixes: separates walking from cycling |
 | `speed_max_kmh` | \(\max_i v_i\) | peaks; also data quality |
 | `speed_cv` | \(\sqrt{\sum_i w_i (v_i - \bar v)^2 / W}\,/\,\bar v\) | steady vs stop-and-go |
 | `frac_slow` | \(\sum_{v_i < 7} w_i / W\) | walking, waiting |
@@ -102,25 +103,41 @@ trips before modeling.
 | Label | Rule (defaults) |
 |---|---|
 | `unknown` | duration < 60 s, fewer than 2 pings, no valid speed, **or median ping gap > 300 s** (too sparse to measure speed) |
-| `walk` | p85 < 8 km/h, max < 15 km/h, **and** overall speed < 15 km/h |
-| `bike` | p85 < 22 km/h, max < 35 km/h, **and** overall speed < 35 km/h |
-| `motorized` | anything faster (car, bus, metro, …) |
+| `motorized` | p85 ≥ 22 km/h, **or** max ≥ 35 km/h, **or** overall speed ≥ 35 km/h (short 30 s windows) |
+| `walk` | otherwise, if the **robust** p85 < 8 km/h **or** the overall speed < 6 km/h |
+| `bike` | the rest |
 
-The max and overall conditions matter:
+Each decision uses the speed that can be trusted for it:
 
-- **Max:** a trip that waits for 20 minutes and then drives for 2 has a walking-like p85, but
-  no walker reaches 60 km/h.
-- **Overall:** the overall speed (`length_m / duration`, gaps included) catches distance
-  covered *across* gaps longer than `speed_max_gap`, which the windowed speeds rightly skip. It
-  is a lower bound of the moving speed, since the duration includes waiting: 30 km in 20
-  minutes is not a walk, however slow the observed windows look.
+- **Motorized on short windows.** A car or bus reaches its speed between stops; 30 s windows
+  catch it. Long windows would average in the stops at traffic lights and make cars look like
+  bicycles. The overall speed (`length_m / duration`, gaps included) also catches distance
+  covered *across* gaps longer than `speed_max_gap`: 30 km in 20 minutes is not a walk, however
+  slow the observed windows look.
+- **Walk vs bike on the robust speed.** Location data often has pings a minute apart and fixes
+  that hop between Wi-Fi and cell positions. A single hop of a few hundred meters inside a 30 s
+  window reads as 15–25 km/h, which turned walks into bikes. The robust cruising speed uses
+  windows spanning at least 3 pings, so a hop averages out; a trip whose overall speed is below
+  6 km/h is a walk whatever its noise.
+
+!!! info "Why the rule changed"
+    The earlier rule required a walk to stay below 8 km/h at p85 and 15 km/h at its maximum,
+    both on 30 s windows. Checked against the official Origin-Destination Survey of Mexico City,
+    it called 22.5% of the trips `bike` (the survey: 1.6%) and only 8.3% `walk`: the "bikes" were
+    mostly walkers, advancing from start to end at walking pace (88% below 6 km/h) while their
+    short-window speeds were pushed up by noisy fixes. The new rule leaves `motorized`
+    unchanged (it already matched the survey, 69% vs 68%) and moves those walks back to `walk`:
+    `bike` 9.5%, `walk` 21.4%.
+    See [the comparison](../examples/mexico-city.md#checked-against-the-official-survey).
 
 Re-run the rules with your own thresholds without recomputing anything:
 
 ```python
-trips = pr.guess_mode(trips, walk_p85_kmh=7, walk_max_kmh=12, bike_p85_kmh=25,
+trips = pr.guess_mode(trips, walk_p85_kmh=7, walk_path_kmh=5, bike_p85_kmh=25,
                       bike_max_kmh=40, max_ping_gap_s=180)
 ```
+
+Tables written before `speed_p85_robust_kmh` existed get the earlier rule.
 
 In the example data (`min_pings=2`, `min_length_m=100`), 42% of trajectories are `unknown`
 because their pings are minutes apart. The rest look plausible:
@@ -128,21 +145,19 @@ because their pings are minutes apart. The rest look plausible:
 | Mode | Trajectories | Median p85 | Median max | Median length | Longest |
 |---|---|---|---|---|---|
 | motorized | 52,684 | 37.0 km/h | 68.5 km/h | 6.3 km | 535 km (intercity) |
-| walk | 26,212 | 2.1 km/h | 3.3 km/h | 0.3 km | 27.7 km |
-| bike | 16,496 | 12.4 km/h | 18.4 km/h | 1.6 km | 59.6 km |
+| walk | 36,381 | 3.1 km/h | 5.2 km/h | 0.4 km | 45 km |
+| bike | 6,327 | 15.2 km/h | 19.0 km/h | 2.5 km | 60 km |
 
 !!! warning "`walk` is not only walking"
-    The `walk` class is slower than real walking (~4–5 km/h). Much of it is lingering or GPS
-    drift near a place that did not qualify as a stay (pings scattered beyond 20 m). Use
-    `straightness`, `length_m` and `frac_slow` to separate real walks, or train a model on these
-    features with labeled trips.
+    The `walk` class still includes lingering or GPS drift near a place that did not qualify as
+    a stay (pings scattered beyond 20 m). Use `straightness`, `length_m` and `frac_slow` to
+    separate real walks, or train a model on these features with labeled trips.
 
 !!! warning "`bike` is not only cycling"
-    Against the official Origin-Destination Survey of Mexico City, `bike` is 22.5% of the LBS
-    trips but only 1.6% of surveyed trips. Speeds of 8–22 km/h are also those of
-    congested traffic and buses, so in a congested city most of this class is likely
-    motorized. `motorized`, by contrast, matches the survey's share and geography well
-    ([the comparison](../examples/mexico-city.md#checked-against-the-official-survey)).
+    In Mexico City, `bike` is 9.5% of the LBS trips; the official survey of 2017 found 1.6% of
+    trips by bicycle, and cycling has grown since (about +70% from 2018 to 2024, per the city's
+    mobility agency). Speeds of 8–22 km/h are also those of buses and microbuses in traffic,
+    which speed alone cannot tell from bicycles.
 
 ## Parameters
 

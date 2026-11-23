@@ -109,22 +109,24 @@ The same, split by the baseline `mode_guess`:
 - **Motorized** trips trace the road hierarchy: Periférico, Circuito Interior, Calzada de
   Tlalpan, Viaducto.
 - **Bike** trips are densest in the center.
-- **Walk** trips are local and diffuse.
+- **Walk** trips cover the whole city, local and diffuse.
 
-| Mode | Trajectories | Median p85 | Median length |
-|---|---|---|---|
-| motorized | 5,825,143 | 40.7 km/h | 4.5 km |
-| unknown | 4,587,279 | | 0.5 km |
-| bike | 1,588,679 | 13.1 km/h | 1.5 km |
-| walk | 1,503,150 | 1.3 km/h | 0.3 km |
+| Mode | Trajectories | Median p85 | Median robust p85 | Median length |
+|---|---|---|---|---|
+| motorized | 5,825,143 | 40.7 km/h | 34.0 km/h | 4.5 km |
+| unknown | 4,587,279 | | | 0.5 km |
+| walk | 2,226,440 | 2.2 km/h | 1.9 km/h | 0.5 km |
+| bike | 865,389 | 15.2 km/h | 14.2 km/h | 1.9 km |
 
 ![Speed features by mode, Mexico City](../assets/figures/cdmx_modes_light.png#only-light)
 ![Speed features by mode, Mexico City](../assets/figures/cdmx_modes_dark.png#only-dark)
 
 !!! warning "Reading the mode baseline"
     - **Motorized** and **bike** have plausible cruising speeds and lengths.
-    - **`walk`** has a median p85 of 1.3 km/h, below real walking: much of it is slow movement
-      or drift near places.
+    - **`walk`** still includes slow movement or drift near places (median p85 2.2 km/h); among
+      trips between two stays, walks move at a median 3.5 km/h along their path.
+    - The walk/bike split uses the robust cruising speed since the comparison with the
+      official survey below; before, 1.59M trajectories were `bike` and 1.50M `walk`.
     - **The longest motorized trips** (100+ km) are real: 4–8-hour drives at ~24 km/h, with no
       jumps, all over the city. These are the signature of taxi, ride-hailing and delivery
       drivers who never stop for the 5 minutes a stay needs.
@@ -160,9 +162,9 @@ corridors from the streets next to them.
 
 | Mode | Network (OSM) | Trajectories | Points matched | In one piece | No matched line | Median distance to the road |
 |---|---|---|---|---|---|---|
-| motorized | drive: 125,606 nodes, 295,154 edges | 370,618 | 93.0% | 87.1% | 6.8% | 8.7 m |
-| bike | bike: 163,318 nodes, 379,006 edges | 101,324 | 93.2% | 89.6% | 8.2% | 8.9 m |
-| walk | walk: 192,068 nodes, 535,444 edges | 95,575 | 93.1% | 88.6% | 11.1% | 11.3 m |
+| motorized | drive: 125,606 nodes, 295,154 edges | 373,923 | 93.0% | 86.9% | 6.7% | 8.6 m |
+| walk | walk: 192,068 nodes, 535,444 edges | 141,059 | 94.2% | 89.8% | 9.9% | 10.3 m |
+| bike | bike: 163,318 nodes, 379,006 edges | 54,943 | 93.9% | 91.1% | 6.8% | 7.9 m |
 
 - **Motorized** trips concentrate on the road hierarchy: Periférico, Circuito Interior,
   Viaducto, Insurgentes, Calzada de Tlalpan.
@@ -171,11 +173,13 @@ corridors from the streets next to them.
 - "No matched line": short trajectories (median 6 points) with at most one ping within 80 m of
   the mode's network, so there is nothing to connect.
 
-Matching the 567,517 trajectories (11.7M points) on the three networks took 9.1 minutes on 32
-CPU cores, with a peak of 9.9 GB of RAM for the whole script (sample, three networks, matching
-and figures). The results are written chunk by chunk with `output_dir`, so they never
-accumulate in memory: the traversed-edges table alone has 46.6M rows. Kept in memory instead,
-the same run peaked at 32 GB.
+Matching the 569,925 trajectories (11.9M points) on the three networks took 9.3 minutes on 32
+CPU cores. The whole script (sampling the devices from the 1.66B pings, extracting their
+trajectories with every ping, matching, figures) took 11 minutes with a peak of 25.8 GB of RAM;
+from a saved sample, matching and figures alone peaked at 9.9 GB (measured on an earlier
+sample of the same size). The results are written chunk
+by chunk with `output_dir`, so they never accumulate in memory: the traversed-edges table alone
+has 46.9M rows. Kept in memory instead, matching peaked at 32 GB.
 
 ## Checked against the official survey
 
@@ -204,24 +208,30 @@ That leaves 329,015 trips, of which 0.3–1% start in each night hour, like in t
 |---|---|---|---|
 | District-to-district flows (all modes) | | | Spearman ρ = **0.77** (6,009 pairs) |
 | Motorized share / trips per origin district | 68.4% | 69.1% | ρ = **0.85** |
-| Bike share / trips per origin district | 1.6% | 22.5% | ρ = 0.30 |
-| Walk share / trips per origin district | 30.1% | 8.3% | ρ = −0.02 |
-| Start hour profile (walk / bike / motorized) | | | r = 0.59 / 0.57 / 0.56 |
+| Bike share / trips per origin district | 1.6% | 9.5% | ρ = 0.31 |
+| Walk share / trips per origin district | 30.1% | 21.4% | ρ = −0.10 |
+| Start hour profile (walk / bike / motorized) | | | r = 0.54 / 0.57 / 0.56 |
 | Median duration, motorized | 45 min (door to door) | 36 min (moving) | |
 
 What this says:
 
 - **Motorized travel is right.** Its share matches the survey, and district-to-district flows
   and motorized origins rank the districts like the survey does.
-- **The `bike` class is not cycling.** It is fourteen times the official cycling share. Most of
-  it is likely slow motorized movement (congested traffic, buses), which speed rules cannot
-  tell from a bicycle. `mode_guess` is a baseline; separating buses, cars and bicycles needs
-  context such as transit routes (see [Speed and mode](../guide/speed-and-mode.md)).
+- **The mode rules were fixed with this comparison.** With the first rules, `bike` was 22.5% of
+  the trips and `walk` 8.3%. The "bikes" advanced from start to end at walking pace: on sparse,
+  noisy pings a hop between two fixes inside a 30 s window read as 15–25 km/h. Walk and bike
+  are now told apart on a robust cruising speed (windows of at least 3 pings), and motorized,
+  which already matched, is unchanged ([details](../guide/speed-and-mode.md#mode_guess-a-baseline)).
+- **`bike` is still above the official share.** 9.5% against 1.6% in 2017. Cycling has grown
+  since (about +70% from 2018 to 2024, per the city's mobility agency), which might put 2022
+  around 2.5–3.5% (a rough interpolation). The rest is likely buses and microbuses in
+  traffic, which move at cycling speed; telling them apart needs context such as transit
+  routes, not speed.
 - **Walking cannot be validated against the survey.** Travel diaries leave out short
   pedestrian trips, so the survey's walking trips are the deliberate ones (to school, to the
   market) with their own places and hours. LBS trips need a stay of 5 minutes or more at each
   end, 200 m apart, which leaves out short walks too. The two sources measure different
-  walking, so neither the share (30% vs 8%) nor the geography is expected to match.
+  walking, so neither the share (30% vs 21%) nor the geography is expected to match.
 - **Timing is broadly right.** Night trips are as rare as in the survey and the evening peak
   matches; the LBS data lacks the sharp 7:00 morning peak and has more late-evening trips.
 - **Durations differ by definition**: a survey trip is door to door (with walking and
@@ -273,7 +283,8 @@ python examples/mexico_city_figures.py /data/out/MX_2022_12            # maps, H
 python examples/mexico_city_figures.py /data/out/MX_2022_12 --modes    # speed / mode figure
 python examples/download_osm.py /data/osm/cdmx                          # OpenStreetMap: drive, bike, walk
 python examples/mexico_city_matching.py /data/out/MX_2022_12 --osm /data/osm/cdmx \
-    --pings "/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet" --sinks mx_sinks.parquet
+    --pings "/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet" --sinks mx_sinks.parquet \
+    --timestamp-column utc_date
 python examples/mexico_city_validation.py /data/out/MX_2022_12 \
     --eod eod_2017_csv/tviaje_eod2017/conjunto_de_datos/tviaje.csv --districts DistritosEODHogaresZMVM2017.shp
 ```

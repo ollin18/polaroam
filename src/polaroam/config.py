@@ -65,6 +65,9 @@ class TrajectoryParams:
     min_length_m: minimum path length (m) of a trajectory (drops GPS jitter around stays; 0 keeps all).
     speed_window: speeds are measured over windows of at least this many seconds (GPS error
         dominates the speed of pings only a few seconds apart).
+    speed_window_pings: the robust cruising speed (``speed_p85_robust_kmh``) uses windows of at
+        least this many median ping gaps (and at least ``speed_window``): on sparse, noisy pings
+        a single jump between two positions then averages out instead of reading as speed.
     speed_max_gap: gaps between pings longer than this (s) are not used for speeds: a speed
         averaged over a long gap mixes moving and waiting (often the time between leaving a
         stay and the first moving ping).
@@ -79,6 +82,7 @@ class TrajectoryParams:
     min_pings: int = 1
     min_length_m: float = 100
     speed_window: float = 30
+    speed_window_pings: float = 3
     speed_max_gap: float = 300
     max_speed_kmh: float = 250
     slow_speed_kmh: float = 7

@@ -127,3 +127,30 @@ def test_distance_across_long_gaps_is_not_walking():
     r = one(pl.concat([slow, after]))
     assert r["speed_p85_kmh"] < 8 and r["speed_max_kmh"] < 15
     assert r["mode_guess"] == "motorized"
+
+
+def test_robust_speed_on_noisy_sparse_walk():
+    """A 5 km/h walk with pings a minute apart, every other fix jumping ~150 m sideways (Wi-Fi /
+    cell positioning): short windows read the hops as 15-20 km/h; the robust speed does not."""
+    p = trip([5] * 24).with_columns(
+        pl.when(pl.int_range(pl.len()) % 2 == 1).then(pl.col("latitude") + 150 / M_PER_DEG)
+        .otherwise(pl.col("latitude")).alias("latitude"))
+    r = one(p)
+    assert r["speed_p85_kmh"] > 8           # the short-window cruising speed is noise
+    assert r["speed_p85_robust_kmh"] < 8    # 3 pings per window average the hops out
+    assert r["mode_guess"] == "walk"
+    # with the earlier rule (no robust column), the same walk was a bike
+    assert pr.guess_mode(pl.DataFrame([r]).drop("speed_p85_robust_kmh"))["mode_guess"][0] == "bike"
+
+
+def test_robust_speed_equals_short_on_dense_pings():
+    # pings every 5 s: 3 gaps are shorter than speed_window, so both use the same windows
+    r = one(trip([15] * 60, dt_s=5))
+    assert r["speed_p85_robust_kmh"] == r["speed_p85_kmh"]
+
+
+def test_motorized_decided_by_short_windows():
+    # stop-and-go bus, 1 minute at 40 km/h then 4 minutes stopped: the long robust windows
+    # average in the stops, but motorized is decided by the short windows
+    r = one(trip(([40] + [0] * 4) * 6))
+    assert r["speed_p85_robust_kmh"] < r["speed_p85_kmh"] and r["mode_guess"] == "motorized"

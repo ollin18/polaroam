@@ -114,7 +114,7 @@ joins over all trajectories, and the two sequential parts run as compiled numba 
 - **Viterbi** runs one trajectory per task, all in parallel.
 
 On a 90,000-node grid, 425,000 points match in about 9 s on 32 cores. On Mexico City's
-OpenStreetMap networks, 11.7M points match in 8.8 minutes (22,000 points per second). The large
+OpenStreetMap networks, 11.9M points match in 9.3 minutes (21,000 points per second). The large
 joins (points × nearby road pieces, candidate pairs) run in Polars' streaming engine, and
 trajectories are processed in chunks of `chunk_points` points, so memory stays bounded: all the
 walk trajectories of the Mexico City example (2.3M points, 535,000 edges) peak at 5.7 GB.
@@ -129,8 +129,8 @@ res = pr.match_trajectories(trips, nets, output_dir="matched/")
 vol = pr.edge_volumes(res.edges, by="mode_guess")        # streams over the files
 ```
 
-In the Mexico City example (11.7M points, three networks) this keeps the whole script at
-9.9 GB; holding the results in memory, it peaked at 32 GB.
+In the Mexico City example (11.9M points, three networks), matching and figures peak at 9.9 GB
+this way; holding the results in memory, matching peaked at 32 GB.
 
 ## Parameters
 

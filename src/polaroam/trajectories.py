@@ -30,11 +30,11 @@ from .quality import SinkOption, remove_sink_pings, sink_table
 TRAJECTORY_COLUMNS = [
     "uid", "trajectory_id", "origin_stop_event", "destination_stop_event",
     "start_timestamp", "end_timestamp", "duration", "n_pings", "n_points", "length_m",
-    "speed_mean_kmh", "speed_median_kmh", "speed_p85_kmh", "speed_max_kmh", "speed_cv",
+    "speed_mean_kmh", "speed_median_kmh", "speed_p85_kmh", "speed_p85_robust_kmh", "speed_max_kmh", "speed_cv",
     "frac_slow", "straightness", "ping_gap_median_s", "n_jumps", "mode_guess",
     "geometry", "coordinates", "timestamps",
 ]
-_FEATURE_COLUMNS = ["speed_mean_kmh", "speed_median_kmh", "speed_p85_kmh", "speed_max_kmh", "speed_cv",
+_FEATURE_COLUMNS = ["speed_mean_kmh", "speed_median_kmh", "speed_p85_kmh", "speed_p85_robust_kmh", "speed_max_kmh", "speed_cv",
                     "frac_slow", "ping_gap_median_s"]
 
 _STOP_COLS = ["uid", "stop_event", "start_timestamp", "end_timestamp", "stop_latitude", "stop_longitude"]
@@ -83,20 +83,29 @@ def speed_features(vertices: pl.DataFrame, params: TrajectoryParams | None = Non
         pl.col("longitude").last().over("_seg").alias("_lolast"),
     )
 
-    # window end: first vertex at least `speed_window` later (else the last vertex)
+    # window end: first vertex at least `window` later (else the last vertex)
     right = (s.group_by("_seg", "timestamp", maintain_order=True)
              .agg(pl.col("latitude").last().alias("_laj"), pl.col("longitude").last().alias("_loj"))
              .rename({"timestamp": "_tj"}).sort("_tj", maintain_order=True))
-    w = (s.with_columns((ts + win).alias("_tq")).sort("_tq", maintain_order=True)
-         .join_asof(right, left_on="_tq", right_on="_tj", by="_seg", strategy="forward", check_sortedness=False)
-         .sort("_seg", "_i")
-         .with_columns(pl.coalesce("_tj", "_tlast").alias("_tj"), pl.coalesce("_laj", "_lalast").alias("_laj"),
-                       pl.coalesce("_loj", "_lolast").alias("_loj"))
-         .with_columns(pl.when(pl.col("_tj") > ts).then(
-             haversine("latitude", "longitude", "_laj", "_loj") / (pl.col("_tj") - ts) * 3600.0).alias("_v")))
-    valid = w.filter((pl.col("_dt") > 0) & (pl.col("_dt") <= max_gap) & ~pl.col("_jump")
-                     & pl.col("_v").is_not_null() & (pl.col("_v") <= cap))
+
+    def windowed(window: pl.Expr) -> pl.DataFrame:
+        """Usable windowed speeds ``_v`` (km/h) for windows of ``window`` ms (per row)."""
+        w = (s.with_columns((ts + window).alias("_tq")).sort("_tq", maintain_order=True)
+             .join_asof(right, left_on="_tq", right_on="_tj", by="_seg", strategy="forward", check_sortedness=False)
+             .sort("_seg", "_i")
+             .with_columns(pl.coalesce("_tj", "_tlast").alias("_tj"), pl.coalesce("_laj", "_lalast").alias("_laj"),
+                           pl.coalesce("_loj", "_lolast").alias("_loj"))
+             .with_columns(pl.when(pl.col("_tj") > ts).then(
+                 haversine("latitude", "longitude", "_laj", "_loj") / (pl.col("_tj") - ts) * 3600.0).alias("_v")))
+        return w.filter((pl.col("_dt") > 0) & (pl.col("_dt") <= max_gap) & ~pl.col("_jump")
+                        & pl.col("_v").is_not_null() & (pl.col("_v") <= cap))
+
+    valid = windowed(pl.lit(win))
     wt = pl.col("_dt").cast(pl.Float64)
+    # robust windows: at least `speed_window_pings` median ping gaps, so that on sparse pings a
+    # window spans several fixes and a single jump between two noisy positions averages out
+    gap = pl.col("_dt").median().over("_seg").fill_null(0)
+    robust = windowed(pl.max_horizontal(pl.lit(win), (gap * float(tp.speed_window_pings)).round(0)).cast(pl.Int64))
 
     tot = valid.with_columns(
         wt.cum_sum().over("_seg").alias("_W"), (wt * pl.col("_v")).cum_sum().over("_seg").alias("_WV"),
@@ -113,12 +122,17 @@ def speed_features(vertices: pl.DataFrame, params: TrajectoryParams | None = Non
          .group_by("_seg", maintain_order=True).agg(
              pl.col("_v").filter(pl.col("_cw") >= 0.5 * pl.col("_W")).first().alias("speed_median_kmh"),
              pl.col("_v").filter(pl.col("_cw") >= 0.85 * pl.col("_W")).first().alias("speed_p85_kmh")))
+    qr = (robust.sort("_seg", "_v", "_i").with_columns(wt.cum_sum().over("_seg").alias("_cw"),
+                                                       wt.sum().over("_seg").alias("_Wr"))
+          .group_by("_seg", maintain_order=True).agg(
+              pl.col("_v").filter(pl.col("_cw") >= 0.85 * pl.col("_Wr")).first().alias("speed_p85_robust_kmh")))
     base = s.with_columns(pl.col("_jump").cast(pl.UInt32).cum_sum().over("_seg").alias("_nj")).group_by(
         "_seg", maintain_order=True).agg(
         pl.col("_nj").last().alias("n_jumps"),
         (pl.col("_dt").drop_nulls().median() / 1000).alias("ping_gap_median_s"),
     )
     return (base.join(tot, on="_seg", how="left").join(var, on="_seg", how="left").join(q, on="_seg", how="left")
+            .join(qr, on="_seg", how="left")
             .with_columns(
                 pl.col("_vbar").alias("speed_mean_kmh"),
                 pl.col("_VMAX").alias("speed_max_kmh"),
@@ -128,21 +142,29 @@ def speed_features(vertices: pl.DataFrame, params: TrajectoryParams | None = Non
             .select("_seg", *_FEATURE_COLUMNS, "n_jumps"))
 
 
-def guess_mode(trajectories: pl.DataFrame | pl.LazyFrame, *, walk_p85_kmh: float = 8, walk_max_kmh: float = 15,
-               bike_p85_kmh: float = 22,
-               bike_max_kmh: float = 35, min_duration_s: float = 60, min_pings: int = 2,
-               max_ping_gap_s: float = 300):
+def guess_mode(trajectories: pl.DataFrame | pl.LazyFrame, *, walk_p85_kmh: float = 8, walk_path_kmh: float = 6,
+               bike_p85_kmh: float = 22, bike_max_kmh: float = 35, min_duration_s: float = 60, min_pings: int = 2,
+               max_ping_gap_s: float = 300, walk_max_kmh: float = 15):
     """Rule-based baseline transport mode: ``walk``, ``bike``, ``motorized`` or ``unknown``.
 
     * ``unknown``: shorter than ``min_duration_s``, fewer than ``min_pings`` pings, no speeds, or
       pings too sparse to measure speed (median gap above ``max_ping_gap_s``: the "speed"
       then averages movement with standing still);
-    * ``walk``: cruising speed (p85) below ``walk_p85_kmh``, never above ``walk_max_kmh``, and an
-      overall trip speed (``length_m / duration``, gaps included) below ``walk_max_kmh``;
-    * ``bike``: p85 below ``bike_p85_kmh``, never above ``bike_max_kmh``, and an overall trip
-      speed below ``bike_max_kmh``;
-    * ``motorized``: anything faster (cars, buses, metro, ...).
+    * ``motorized``: cruising speed (p85) of at least ``bike_p85_kmh``, a speed of at least
+      ``bike_max_kmh`` at some point, or an overall speed (``length_m / duration``) of at least
+      ``bike_max_kmh``. These use the short ``speed_window`` windows, which catch a vehicle's
+      speed between stops (cars, buses, metro...);
+    * ``walk``: the rest, if the *robust* cruising speed (``speed_p85_robust_kmh``, windows of
+      several pings) is below ``walk_p85_kmh`` or the overall speed is below ``walk_path_kmh``;
+    * ``bike``: the rest.
 
+    Walking is not decided by short windows: on sparse location data (pings a minute apart)
+    one hop between two noisy positions reads as 15-25 km/h and turned walks into bikes. On
+    one month of Mexico City, this rule moved the bike share of trips from 22.5% to 9.5% and the
+    walk share from 8.3% to 21.4%, leaving motorized unchanged (69%, as in the official survey).
+
+    Tables without ``speed_p85_robust_kmh`` (computed by earlier versions) get the earlier rule:
+    walk if p85 < ``walk_p85_kmh`` and the maximum and overall speeds < ``walk_max_kmh``.
     A transparent starting point to replace with a trained model; recompute with other
     thresholds with ``guess_mode(trajectories, walk_p85_kmh=...)``.
     """
@@ -151,12 +173,17 @@ def guess_mode(trajectories: pl.DataFrame | pl.LazyFrame, *, walk_p85_kmh: float
     # speed, so it catches distance covered across long gaps that the windowed speeds skip.
     overall = pl.when(pl.col("duration") > 0).then(pl.col("length_m") / pl.col("duration") * 3.6).otherwise(0.0)
     sparse = pl.col("ping_gap_median_s") > max_ping_gap_s
-    expr = (pl.when((pl.col("duration") < min_duration_s) | (pl.col("n_pings") < min_pings) | p85.is_null()
-                    | sparse.fill_null(True))
-            .then(pl.lit("unknown"))
-            .when((p85 < walk_p85_kmh) & (vmax < walk_max_kmh) & (overall < walk_max_kmh)).then(pl.lit("walk"))
-            .when((p85 < bike_p85_kmh) & (vmax < bike_max_kmh) & (overall < bike_max_kmh)).then(pl.lit("bike"))
-            .otherwise(pl.lit("motorized")).alias("mode_guess"))
+    unknown = (pl.col("duration") < min_duration_s) | (pl.col("n_pings") < min_pings) | p85.is_null() | sparse.fill_null(True)
+    motorized = (p85 >= bike_p85_kmh) | (vmax >= bike_max_kmh) | (overall >= bike_max_kmh)
+    names = trajectories.collect_schema().names() if isinstance(trajectories, pl.LazyFrame) else trajectories.columns
+    if "speed_p85_robust_kmh" in names:
+        walk = (pl.col("speed_p85_robust_kmh") < walk_p85_kmh).fill_null(False) | (overall < walk_path_kmh)
+    else:
+        walk = (p85 < walk_p85_kmh) & (vmax < walk_max_kmh) & (overall < walk_max_kmh)
+    expr = (pl.when(unknown).then(pl.lit("unknown"))
+            .when(motorized).then(pl.lit("motorized"))
+            .when(walk).then(pl.lit("walk"))
+            .otherwise(pl.lit("bike")).alias("mode_guess"))
     return trajectories.with_columns(expr)
 
 

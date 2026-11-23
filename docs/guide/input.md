@@ -21,6 +21,17 @@ pings.collect_schema()   # uid: String, latitude: Float64, longitude: Float64, t
 Every function that takes pings (`Pipeline.run`, `detect_stops`, `extract_trajectories`,
 `find_sinks`) reads them the same way.
 
+!!! tip "Taking a subset of devices from a large dataset"
+    Filter the raw id column, in its own type, *before* `read_pings`. Filtering after it means
+    converting every id to text first: on 1.66B pings, taking 60,000 devices that way peaked at
+    about 100 GB of RAM, against 8 GB (and 5 s) when filtering the raw column, which the parquet
+    reader does as it scans.
+
+    ```python
+    raw = pl.scan_parquet("raw/*.parquet").filter(pl.col("device_id").is_in(ids.implode()))
+    pings = pr.read_pings(raw, {"uid": "device_id"})
+    ```
+
 ## Column names
 
 Without instructions, polaroam looks for common names, **ignoring case**:
