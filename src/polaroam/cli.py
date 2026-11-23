@@ -5,6 +5,7 @@
     polaroam finalize OUTPUT                   # close open stays after the last batch
     polaroam trajectories PINGS STOPS OUT.parquet
     polaroam match    TRAJECTORIES OUT_DIR --network ROADS.parquet  # snap trajectories to roads
+    polaroam routines STAYS TRAJECTORIES OUT_DIR [--network MODE=ROADS ...]  # routines, trip completion
 """
 
 from __future__ import annotations
@@ -165,6 +166,21 @@ def main(argv: list[str] | None = None) -> int:
     for name, kind in (("search-radius", float), ("max-candidates", int), ("sigma", float), ("beta", float),
                        ("route-factor", float), ("max-speed", float)):
         mt.add_argument(f"--{name}", type=kind)
+    ro = sub.add_parser("routines", help="trips between stays, routines and their mode; with --network, "
+                                         "complete routine trips along the device's usual streets")
+    ro.add_argument("stays", help="clustered stays: parquet file, glob or directory (clusters or home_work table)")
+    ro.add_argument("trajectories", help="trajectories: parquet file, glob or directory (keep every ping: --tolerance 0)")
+    ro.add_argument("out", help="output directory")
+    ro.add_argument("--timezone", help="local time for the days and hours (default: the stays' timezone column)")
+    ro.add_argument("--min-days", type=int, default=3, help="days a trip must repeat to be a routine (default 3)")
+    ro.add_argument("--min-distance", type=float, default=200.0, help="minimum distance between stays (m, default 200)")
+    ro.add_argument("--network", action="append", metavar="[MODE=]ROADS",
+                    help="road table per mode, as for `match`; without it, only trips and routines are written")
+    ro.add_argument("--directed", action="store_true", help="road rows are one direction each (osmnx edges)")
+    ro.add_argument("--preference", type=float, default=0.7,
+                    help="preference for the routine's usual streets, 0 = shortest path (default 0.7)")
+    ro.add_argument("--fill-empty", action="store_true", help="also give trips without pings the routine's usual route")
+    ro.add_argument("--search-radius", type=float, help="map matching search radius (m)")
     a = ap.parse_args(argv)
 
     from .local_time import TimezoneRequired
@@ -180,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
 def _run(a: argparse.Namespace, Pipeline) -> int:
     if a.cmd == "match":
         return _match(a)
+    if a.cmd == "routines":
+        return _routines(a)
     if a.cmd == "sinks":
         from .quality import find_sinks
 
@@ -209,19 +227,33 @@ def _run(a: argparse.Namespace, Pipeline) -> int:
     return 0
 
 
+def _networks(items: list[str], directed: bool):
+    """``["walk=walk.parquet", ...]`` -> ``{"walk": RoadNetwork, ...}``; one unnamed item -> a RoadNetwork."""
+    from .roads import RoadNetwork
+
+    nets = {}
+    for item in items:
+        mode, sep, path = item.rpartition("=")
+        nets[mode if sep else None] = RoadNetwork.read(path, directed=directed)
+    return nets[None] if list(nets) == [None] else {k: v for k, v in nets.items() if k is not None}
+
+
+def _scan(path: str):
+    from pathlib import Path
+
+    import polars as pl
+
+    return pl.scan_parquet(f"{path.rstrip('/')}/**/*.parquet" if Path(path).is_dir() else path)
+
 
 def _match(a: argparse.Namespace) -> int:
     from pathlib import Path
 
     import polars as pl
 
-    from .roads import MatchParams, RoadNetwork, match_trajectories
+    from .roads import MatchParams, match_trajectories
 
-    nets = {}
-    for item in a.network:
-        mode, sep, path = item.rpartition("=")
-        nets[mode if sep else None] = RoadNetwork.read(path, directed=a.directed)
-    network = nets[None] if list(nets) == [None] else {k: v for k, v in nets.items() if k is not None}
+    network = _networks(a.network, a.directed)
     over = {k: v for k, v in (("search_radius", a.search_radius), ("max_candidates", a.max_candidates),
                               ("sigma", a.sigma), ("beta", a.beta), ("route_factor", a.route_factor),
                               ("max_speed_kmh", a.max_speed)) if v is not None}
@@ -229,6 +261,45 @@ def _match(a: argparse.Namespace) -> int:
     res = match_trajectories(pl.scan_parquet(a.trajectories), network, MatchParams(**over), by=a.by, output_dir=out)
     t = res.trajectories.select(pl.len(), (pl.col("n_parts") == 1).sum()).collect().row(0)
     print(f"{t[0]:,} trajectories matched ({t[1]:,} in one piece) -> {out}/{{trajectories,points,edges}}/")
+    return 0
+
+
+def _routines(a: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    import polars as pl
+
+    from .roads import MatchParams, match_trajectories
+    from .routines import complete_trips, find_routines, routine_modes, stay_trips
+
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    tr = _scan(a.trajectories).collect()
+    try:
+        trips = stay_trips(_scan(a.stays), tr, timezone=a.timezone, min_distance_m=a.min_distance)
+    except ValueError as e:
+        raise SystemExit(f"polaroam routines: {e} Pass --timezone.") from None
+    trips = find_routines(trips, min_days=a.min_days)
+    tm = routine_modes(tr, trips)
+    trips.write_parquet(out / "trips.parquet")
+    tm.drop("coordinates", "timestamps", strict=False).write_parquet(out / "trajectory_modes.parquet")
+    inr = trips.filter(pl.col("routine_id").is_not_null())
+    print(f"{trips.height:,} trips, {inr.height:,} in {inr['routine_id'].n_unique():,} routines; "
+          f"{trips.filter(pl.col('mode_source') == 'routine').height:,} got their routine's mode -> {out}/trips.parquet")
+    if not a.network:
+        return 0
+    nets = _networks(a.network, a.directed)
+    ids = inr.select("uid", pl.col("trajectory_ids").alias("trajectory_id")).explode("trajectory_id", empty_as_null=True).drop_nulls()
+    rt = tm.join(ids, on=["uid", "trajectory_id"], how="semi")
+    params = MatchParams(**({"search_radius": a.search_radius} if a.search_radius is not None else {}))
+    points = match_trajectories(rt, nets, params, by="mode", output_dir=out / "matched").points.collect()
+    done = complete_trips(trips, points, nets, preference=a.preference, fill_empty=a.fill_empty)
+    done.trips.write_parquet(out / "completed_trips.parquet")
+    done.edges.write_parquet(out / "completed_edges.parquet")
+    done.routes.write_parquet(out / "routes.parquet")
+    one = int((done.trips["n_parts"] == 1).sum())
+    print(f"{done.trips.height:,} routine trips completed ({one:,} in one piece) -> "
+          f"{out}/{{completed_trips,completed_edges,routes}}.parquet")
     return 0
 
 

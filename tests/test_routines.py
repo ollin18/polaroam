@@ -107,3 +107,25 @@ def test_fill_empty(setup):
     # without the preference: the shortest way, straight north
     plain = pr.complete_trips(tr, res, net, gap_m=150, fill_empty=True, preference=0.0)
     assert max_x(plain.trips.filter(pl.col("trip_id") == 4)["geometry"][0]) < 10
+
+
+def test_cli_routines(tmp_path):
+    from polaroam.cli import main
+
+    from .test_roads import grid as roads
+
+    stays().write_parquet(tmp_path / "stays.parquet")
+    trajectories().write_parquet(tmp_path / "trajs.parquet")
+    roads().write_parquet(tmp_path / "roads.parquet")
+    base = ["routines", str(tmp_path / "stays.parquet"), str(tmp_path / "trajs.parquet")]
+    with pytest.raises(SystemExit):  # no timezone given or in the stays
+        main([*base, str(tmp_path / "x")])
+    assert main([*base, str(tmp_path / "only"), "--timezone", "UTC"]) == 0
+    assert not (tmp_path / "only" / "completed_trips.parquet").exists()
+    assert main([*base, str(tmp_path / "out"), "--timezone", "UTC", "--network", f"walk={tmp_path / 'roads.parquet'}",
+                 "--fill-empty"]) == 0
+    trips = pl.read_parquet(tmp_path / "out" / "trips.parquet")
+    assert trips["routine_id"].drop_nulls().n_unique() == 1
+    assert pl.read_parquet(tmp_path / "out" / "trajectory_modes.parquet")["mode"].to_list() == ["walk"] * 3
+    done = pl.read_parquet(tmp_path / "out" / "completed_trips.parquet")
+    assert done.height == 3 and (done["n_parts"] == 1).all()

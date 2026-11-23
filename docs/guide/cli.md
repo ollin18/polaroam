@@ -9,6 +9,7 @@ polaroam finalize OUTPUT                     # close open stays after the last b
 polaroam sinks    INPUT SINKS.parquet        # find coordinate sinks (default geocodes, towers)
 polaroam trajectories PINGS STOPS OUT.parquet [options]
 polaroam match    TRAJECTORIES OUT_DIR --network ROADS.parquet   # snap trajectories to roads
+polaroam routines STAYS TRAJECTORIES OUT_DIR [--network MODE=ROADS ...]  # routines, trip completion
 ```
 
 ## Examples
@@ -32,7 +33,16 @@ polaroam finalize out/MX
 # trajectories from stays computed earlier: full resolution, no micro-trips, time-aware WKT
 polaroam trajectories "raw/MX/**/*.parquet" "out/MX/stops/**/*.parquet" trips.parquet \
     --tolerance 0 --min-pings 2 --min-length 100 --wkt-measure
+
+# routines and their mode; with networks, routine trips completed from stay to stay
+polaroam routines out/MX/clusters trips.parquet out/MX/routines --timezone America/Mexico_City \
+    --network walk=walk.parquet --network bike=bike.parquet --network motorized=drive.parquet --directed
 ```
+
+`routines` writes `trips.parquet` (trips between stays, with `state`, `routine_id` and `mode`)
+and `trajectory_modes.parquet` (each trajectory's final `mode`). With `--network` it also
+matches the routine trips (`matched/`) and writes `completed_trips.parquet`,
+`completed_edges.parquet` and `routes.parquet`; see [Routines](routines.md).
 
 ## Options
 
@@ -57,3 +67,7 @@ polaroam trajectories "raw/MX/**/*.parquet" "out/MX/stops/**/*.parquet" trips.pa
 | `--overwrite` | run | replace an existing output directory |
 | `--batch-id ID` | update | batch name (e.g. the date); re-running it is a no-op |
 | `--skip-home-work` | update | do not refresh home/work after this batch |
+| `--timezone TZ` | routines | local time for days and hours (default: the stays' `timezone` column) |
+| `--min-days N`, `--min-distance M` | routines | days for a routine (3); minimum distance between stays (200 m) |
+| `--network [MODE=]ROADS`, `--directed` | match, routines | road table(s), one per mode |
+| `--preference P`, `--fill-empty` | routines | preference for the usual streets (0.7); route trips without pings too |

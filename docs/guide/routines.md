@@ -134,5 +134,8 @@ walk and bike numbers (44% and 67% recall at 0.7) as indicative.
     habits. Analyses of route choice or variability should use observed edges only
     (`imputed == False`), or report both.
 
+From the command line: `polaroam routines STAYS TRAJECTORIES OUT_DIR --network MODE=ROADS ...`
+([Command line](cli.md)).
+
 Run `examples/mexico_city_routines.py` to reproduce the numbers; see the
 [Mexico City example](../examples/mexico-city.md#routines).
