@@ -31,8 +31,8 @@ pipe.finalize()                                  # closes stays still open after
 Day by day plus `finalize()` gives **exactly** the same tables as `run()` (see
 [Incremental processing](incremental.md)).
 
-- **Retries are safe.** Each shard of a batch is committed atomically and recorded in
-  `manifest.json`. Re-running a committed `batch_id` does nothing, so a failed daily job can
+- **Retries are safe.** Each shard of a batch is committed atomically and marked in
+  `_commits/`. Re-running a committed `batch_id` does nothing, so a failed daily job can
   simply be retried; it resumes at the first uncommitted shard.
 - **Order matters per device.** Batches must arrive in time order (e.g. one day at a time).
 - **Clusters and home/work** are recomputed from the accumulated stays after every batch. Pass
@@ -55,7 +55,8 @@ pipe.locations()
 
 ```text
 out/CO/
-├── manifest.json                              config, polars version, committed batches
+├── manifest.json                              config and polars version (written once)
+├── _commits/batch=<id>/shard=<k>              one empty marker per committed shard
 ├── stops/batch=<id>/shard=<k>.parquet         stays, appended per batch
 ├── trajectories/batch=<id>/shard=<k>.parquet  trajectories, appended per batch
 ├── clusters/shard=<k>.parquet                 clustered stays (current state)
@@ -68,7 +69,10 @@ out/CO/
 With `n_shards > 1`, each batch is first written once, partitioned by device shard, in one
 streaming pass over the input. Each shard then reads only its own pings. This is the
 equivalent of the gc-lbs "slim" table and avoids re-scanning the input once per shard. The
-`_split` directory is deleted when the batch is committed.
+`_split` directory is deleted when every shard of the batch is committed.
+
+Every method takes `shards=[...]`, so several processes or machines can share one output
+directory, each with its own shards: see [Several machines](scaling.md#several-machines).
 
 See [Output tables](outputs.md) for every column.
 

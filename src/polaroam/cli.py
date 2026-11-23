@@ -3,6 +3,7 @@
     polaroam run      INPUT OUTPUT [options]   # everything at once
     polaroam update   INPUT OUTPUT [options]   # one incremental batch (e.g. a day)
     polaroam finalize OUTPUT                   # close open stays after the last batch
+    (run, update, finalize: --only-shards 0-3,9 or --only-shards slurm for one process of many)
     polaroam trajectories PINGS STOPS OUT.parquet
     polaroam match    TRAJECTORIES OUT_DIR --network ROADS.parquet  # snap trajectories to roads
     polaroam routines STAYS TRAJECTORIES OUT_DIR [--network MODE=ROADS ...]  # routines, trip completion
@@ -99,6 +100,33 @@ def _add_traj_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--wkt-measure", action="store_true", default=None, help="write LINESTRING M (time as measure)")
 
 
+def _add_only_shards(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--only-shards", metavar="SPEC",
+                   help="process only these device shards, e.g. 0-3,9; 'slurm': this array task's share "
+                        "(shard k when k %% SLURM_ARRAY_TASK_COUNT == task index)")
+
+
+def _only_shards(spec: str | None, n: int) -> list[int] | None:
+    """``"0-3,9"`` -> ``[0, 1, 2, 3, 9]``; ``"slurm"`` -> this SLURM array task's shards."""
+    import os
+
+    if not spec:
+        return None
+    if spec == "slurm":
+        try:
+            i = int(os.environ["SLURM_ARRAY_TASK_ID"]) - int(os.environ.get("SLURM_ARRAY_TASK_MIN", "0"))
+            m = int(os.environ["SLURM_ARRAY_TASK_COUNT"])
+        except KeyError:
+            raise SystemExit("--only-shards slurm needs SLURM_ARRAY_TASK_ID and SLURM_ARRAY_TASK_COUNT "
+                             "(run it inside an sbatch --array job)") from None
+        return [k for k in range(n) if k % m == i]
+    out: list[int] = []
+    for part in spec.split(","):
+        a, sep, b = part.strip().partition("-")
+        out += list(range(int(a), int(b) + 1)) if sep else [int(a)]
+    return out
+
+
 def _traj_args(a: argparse.Namespace) -> dict:
     return {"max_time_gap": a.max_gap, "simplify_tolerance": a.tolerance, "min_pings": a.min_pings,
             "min_length_m": a.min_length, "speed_window": a.speed_window, "max_speed_kmh": a.max_speed,
@@ -135,14 +163,20 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--cuda", action="store_true", help="use the polars GPU engine when available")
         _add_sink_args(p)
         _add_traj_args(p)
+        _add_only_shards(p)
         if name == "run":
             p.add_argument("--overwrite", action="store_true")
         else:
             p.add_argument("--batch-id", help="batch identifier (e.g. the date); re-running it is a no-op")
             p.add_argument("--skip-home-work", action="store_true", help="do not refresh home/work after this batch")
+            p.add_argument("--split-only", action="store_true",
+                           help="only split the batch by shard (and find sinks), for processes run with --only-shards")
     f = sub.add_parser("finalize")
     f.add_argument("output")
     f.add_argument("--cuda", action="store_true")
+    _add_only_shards(f)
+    st = sub.add_parser("status", help="committed shards per batch")
+    st.add_argument("output")
     t = sub.add_parser("trajectories", help="trajectories from pings + already computed stops")
     t.add_argument("pings")
     t.add_argument("stops", help="parquet with stops (stops, clusters or home_work table)")
@@ -206,14 +240,26 @@ def _run(a: argparse.Namespace, Pipeline) -> int:
         s.write_parquet(a.out)
         print(f"{s.height:,} sink coordinates -> {a.out}")
         return 0
+    if a.cmd == "status":
+        import json
+
+        print(json.dumps(Pipeline(a.output, verbose=False).status(), indent=1))
+        return 0
     if a.cmd == "run":
         pipe = Pipeline(a.output, _config(a), trajectories=a.trajectories, use_cuda=a.cuda)
-        s = pipe.run(a.input, overwrite=a.overwrite)
+        s = pipe.run(a.input, overwrite=a.overwrite, shards=_only_shards(a.only_shards, pipe.config.n_shards))
     elif a.cmd == "update":
         pipe = Pipeline(a.output, _config(a), trajectories=a.trajectories, use_cuda=a.cuda)
-        s = pipe.update(a.input, batch_id=a.batch_id, compute_home_work=not a.skip_home_work)
+        if a.split_only:
+            if a.batch_id is None:
+                raise SystemExit("--split-only needs --batch-id")
+            print(f"split -> {pipe.split(a.input, a.batch_id)}")
+            return 0
+        s = pipe.update(a.input, batch_id=a.batch_id, compute_home_work=not a.skip_home_work,
+                        shards=_only_shards(a.only_shards, pipe.config.n_shards))
     elif a.cmd == "finalize":
-        s = Pipeline(a.output, use_cuda=a.cuda).finalize()
+        pipe = Pipeline(a.output, use_cuda=a.cuda)
+        s = pipe.finalize(shards=_only_shards(a.only_shards, pipe.config.n_shards))
     else:
         from .trajectories import extract_trajectories
 

@@ -6,6 +6,7 @@ Installing the package provides a `polaroam` command (also `python -m polaroam.c
 polaroam run      INPUT OUTPUT [options]     # everything at once
 polaroam update   INPUT OUTPUT [options]     # one incremental batch (e.g. a day)
 polaroam finalize OUTPUT                     # close open stays after the last batch
+polaroam status   OUTPUT                     # committed shards per batch
 polaroam sinks    INPUT SINKS.parquet        # find coordinate sinks (default geocodes, towers)
 polaroam trajectories PINGS STOPS OUT.parquet [options]
 polaroam match    TRAJECTORIES OUT_DIR --network ROADS.parquet   # snap trajectories to roads
@@ -67,6 +68,8 @@ matches the routine trips (`matched/`) and writes `completed_trips.parquet`,
 | `--overwrite` | run | replace an existing output directory |
 | `--batch-id ID` | update | batch name (e.g. the date); re-running it is a no-op |
 | `--skip-home-work` | update | do not refresh home/work after this batch |
+| `--only-shards SPEC` | run, update, finalize | process only these device shards (`0-3,9`, or `slurm`: this array task's share); see [Several machines](scaling.md#several-machines) |
+| `--split-only` | update | only split the batch by shard, once, for processes run with `--only-shards` |
 | `--timezone TZ` | routines | local time for days and hours (default: the stays' `timezone` column) |
 | `--min-days N`, `--min-distance M` | routines | days for a routine (3); minimum distance between stays (200 m) |
 | `--network [MODE=]ROADS`, `--directed` | match, routines | road table(s), one per mode |

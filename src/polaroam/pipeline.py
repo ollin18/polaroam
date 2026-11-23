@@ -7,7 +7,8 @@ day by day and then ``finalize()`` gives the same tables as ``run``.
 Output directory layout::
 
     out/
-      manifest.json                      config + committed batches
+      manifest.json                      config (written once)
+      _commits/batch=<id>/shard=<k>      one empty marker per committed shard of a batch
       sinks.parquet                      coordinate sinks found with remove_sinks=True
       stops/batch=<id>/shard=<k>.parquet         stays, appended per batch
       trajectories/batch=<id>/shard=<k>.parquet  trajectories, appended per batch
@@ -17,13 +18,18 @@ Output directory layout::
       _state/shard=<k>/...                       incremental state (+ timezone of every stay coordinate)
 
 Devices are split into ``n_shards`` groups by a stable hash of ``uid``; each
-shard is processed independently, which bounds memory for very large inputs.
+shard is processed independently, which bounds memory for very large inputs. Every
+method takes ``shards=[...]`` to process only some of them, so several processes or
+machines (a SLURM job array, Ray tasks) can share one output directory, each with its
+own shards: a shard's files and commit marker are written by one process only.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import socket
 import time
 import warnings
 from dataclasses import dataclass
@@ -85,48 +91,66 @@ class Pipeline:
             self.trajectories = trajectories
 
     # ------------------------------------------------------------------ public
-    def run(self, pings: PingSource, *, overwrite: bool = False, column_map: dict[str, str | list[str]] | None = None) -> BatchSummary:
-        """Process all pings at once (resets previous outputs if ``overwrite``)."""
-        if self._read_manifest() is not None:
+    def run(self, pings: PingSource, *, overwrite: bool = False, column_map: dict[str, str | list[str]] | None = None,
+            shards: list[int] | None = None) -> BatchSummary:
+        """Process all pings at once (resets previous outputs if ``overwrite``).
+
+        With ``shards``, only those shards; run the others in other processes on the same
+        ``output_dir`` (it is then never reset: call :meth:`reset` first if needed).
+        """
+        if shards is None and self._read_manifest() is not None:
             if not overwrite:
                 raise FileExistsError(f"{self.dir} already holds a pipeline; pass overwrite=True.")
             self.reset()
+        elif shards is not None and overwrite:
+            raise ValueError("overwrite=True would delete the other processes' shards; call reset() once instead.")
         self._one_shot = True  # all the data in one batch: remove_sinks=True sees everything
         try:
-            return self.update(pings, batch_id="all", flush=True, column_map=column_map)
+            return self.update(pings, batch_id="all", flush=True, column_map=column_map, shards=shards)
         finally:
             self._one_shot = False
 
     def update(self, pings: PingSource, *, batch_id: str | None = None, flush: bool = False,
-               compute_home_work: bool = True, column_map: dict[str, str | list[str]] | None = None) -> BatchSummary:
+               compute_home_work: bool = True, column_map: dict[str, str | list[str]] | None = None,
+               shards: list[int] | None = None) -> BatchSummary:
         """Process one batch of pings (e.g. a day), committing it per shard.
 
         Batches must come in time order per device. Re-running a committed
         ``batch_id`` is a no-op, so a failed daily job can simply be retried.
+
+        ``shards`` processes only those device shards (default: all). Processes with disjoint
+        shards can run the same batch at the same time on one ``output_dir``; each reads the
+        batch's shared split (see :meth:`split`) or, without one, splits its own shards.
         """
         t0 = time.time()
         cfg = self.config
-        manifest = self._read_manifest() or self._new_manifest()
-        if manifest.get("finalized"):
+        mine = self._shards(shards)
+        if batch_id is None:
+            if shards is not None:
+                raise ValueError("pass batch_id with shards: every process must name the batch the same way")
+            batch_id = f"{len(self._batches()):05d}"
+        batch_id = str(batch_id)
+        if self._finalized(mine):
             raise RuntimeError("Pipeline already finalized; start a new output_dir to add more data.")
-        batch_id = str(batch_id if batch_id is not None else f"{len(manifest['batches']):05d}")
-        done = set(manifest["batches"].get(batch_id, []))
-        if len(done) == cfg.n_shards:
+        done = self._committed(batch_id)
+        todo = [k for k in mine if k not in done]
+        if not todo:
             self._log(f"batch {batch_id} already committed; skipping")
             return BatchSummary(batch_id, 0, 0, 0.0)
 
-        lf = read_pings(pings, column_map or cfg.column_map, timestamp_unit=cfg.timestamp_unit,
-                        timestamp_timezone=cfg.timestamp_timezone)
-        if cfg.timezone is None and not cfg.find_timezones:
-            # fail before any work, with a timezone suggested from a sample of these pings
-            raise timezone_required(lf, "latitude", "longitude")
+        lf = self._prepare(pings, column_map)  # fails before anything is written without a timezone
+        self._ensure_manifest()
         # coordinate sinks (default geocodes, towers): drop those pings before anything else
         lf = remove_sink_pings(lf, self._sinks(lf, batch_id))
-        split = self._split(lf, batch_id) if cfg.n_shards > 1 else None
+        shared = self.dir / "_split" / f"batch={batch_id}"
+        if cfg.n_shards == 1:
+            split, private = None, False
+        elif (shared / "_SUCCESS").exists() or len(todo) == cfg.n_shards:
+            split, private = self._split(lf, batch_id), False
+        else:  # some shards only, no shared split: split just ours, in a directory of our own
+            split, private = self._split(lf, batch_id, only=todo), True
         n_stops = n_traj = 0
-        for k in range(cfg.n_shards):
-            if k in done:
-                continue
+        for k in todo:
             part = lf if split is None else self._shard_part(split, k)
             sdir = self.dir / "_state" / f"shard={k}"
             det = StopDetector(cfg.stops, trajectories=self.trajectories, trajectory_params=cfg.trajectories,
@@ -153,32 +177,68 @@ class Pipeline:
             shutil.rmtree(sdir, ignore_errors=True)
             tmp.rename(sdir)
 
-            manifest["batches"].setdefault(batch_id, []).append(k)
-            if flush and len(manifest["batches"][batch_id]) == cfg.n_shards:
-                manifest["finalized"] = True
-            self._write_manifest(manifest)
+            self._commit(batch_id, k)  # the shard's state and tables are in place
+            if flush:
+                self._commit("_finalized", k)
             n_stops += out.stops.height
             n_traj += out.trajectories.height if out.trajectories is not None else 0
             self._log(f"batch {batch_id} shard {k + 1}/{cfg.n_shards}: {out.stops.height:,} stops"
                       + (f", {out.trajectories.height:,} trajectories" if out.trajectories is not None else "")
                       + f" ({time.time() - t0:.0f}s)")
-        if split is not None:
+        if private or split is not None and len(self._committed(batch_id)) == cfg.n_shards:
             shutil.rmtree(split, ignore_errors=True)
         return BatchSummary(batch_id, n_stops, n_traj, time.time() - t0)
 
-    def _split(self, lf: pl.LazyFrame, batch_id: str) -> Path:
+    def split(self, pings: PingSource, batch_id: str, *, column_map: dict[str, str | list[str]] | None = None) -> Path:
+        """Split a batch by device shard once, before processes that each take some shards
+        (``update(..., shards=...)``) read it. Optional: without it, each process splits its own
+        shards, reading the whole batch once per process. Also finds the coordinate sinks with
+        ``remove_sinks=True``. It is removed when every shard of the batch is committed."""
+        lf = self._prepare(pings, column_map)
+        self._ensure_manifest()
+        return self._split(remove_sink_pings(lf, self._sinks(lf, str(batch_id))), str(batch_id))
+
+    def status(self) -> dict:
+        """Committed shards per batch and finalized shards, from the commit markers."""
+        return {"n_shards": self.config.n_shards,
+                "batches": {b: sorted(self._committed(b)) for b in self._batches()},
+                "finalized": sorted(self._committed("_finalized") | set(range(self.config.n_shards))
+                                    if self._legacy().get("finalized") else self._committed("_finalized"))}
+
+    def _prepare(self, pings: PingSource, column_map) -> pl.LazyFrame:
+        cfg = self.config
+        lf = read_pings(pings, column_map or cfg.column_map, timestamp_unit=cfg.timestamp_unit,
+                        timestamp_timezone=cfg.timestamp_timezone)
+        if cfg.timezone is None and not cfg.find_timezones:
+            # fail before any work, with a timezone suggested from a sample of these pings
+            raise timezone_required(lf, "latitude", "longitude")
+        return lf
+
+    def _split(self, lf: pl.LazyFrame, batch_id: str, only: list[int] | None = None) -> Path:
         """Write the batch once, partitioned by device shard (one streaming pass over the input),
-        so each shard reads only its own pings instead of re-scanning everything."""
+        so each shard reads only its own pings instead of re-scanning everything. With ``only``,
+        just those shards, in a directory private to this process."""
         d = self.dir / "_split" / f"batch={batch_id}"
-        if (d / "_SUCCESS").exists():  # retry of a partially committed batch
+        if only is not None:
+            d = d.with_name(f"{d.name}.{socket.gethostname()}-{os.getpid()}")
+        elif (d / "_SUCCESS").exists():  # retry of a partially committed batch
             return d
         shutil.rmtree(d, ignore_errors=True)
         t = time.time()
-        lf.with_columns(shard_expr(self.config.n_shards).alias("_shard")).sink_parquet(
-            pl.PartitionBy(d, key="_shard", include_key=False), mkdir=True, engine="streaming")
-        d.mkdir(parents=True, exist_ok=True)  # an empty batch writes no partitions
-        (d / "_SUCCESS").touch()
-        self._log(f"batch {batch_id}: split into {self.config.n_shards} shards ({time.time() - t:.0f}s)")
+        tmp = d.with_name(f"{d.name}.tmp-{socket.gethostname()}-{os.getpid()}")
+        shutil.rmtree(tmp, ignore_errors=True)
+        lf = lf.with_columns(shard_expr(self.config.n_shards).alias("_shard"))
+        if only is not None:
+            lf = lf.filter(pl.col("_shard").is_in(only))
+        lf.sink_parquet(pl.PartitionBy(tmp, key="_shard", include_key=False), mkdir=True, engine="streaming")
+        tmp.mkdir(parents=True, exist_ok=True)  # an empty batch writes no partitions
+        (tmp / "_SUCCESS").touch()
+        try:
+            tmp.rename(d)
+        except OSError:  # another process published the same split first
+            shutil.rmtree(tmp, ignore_errors=True)
+        what = f"{len(only)} of {self.config.n_shards}" if only is not None else f"{self.config.n_shards}"
+        self._log(f"batch {batch_id}: split into {what} shards ({time.time() - t:.0f}s)")
         return d
 
     @staticmethod
@@ -189,15 +249,15 @@ class Pipeline:
                                         "timestamp": pl.Int64})
         return pl.scan_parquet(files, hive_partitioning=False)
 
-    def finalize(self) -> BatchSummary:
+    def finalize(self, shards: list[int] | None = None) -> BatchSummary:
         """Close every open stay / trajectory. Call once after the last batch."""
         empty = pl.LazyFrame(schema={"uid": pl.String, "latitude": pl.Float64, "longitude": pl.Float64,
                                      "timestamp": pl.Int64})
-        return self.update(empty, batch_id="finalize", flush=True)
+        return self.update(empty, batch_id="finalize", flush=True, shards=shards)
 
-    def refresh_home_work(self) -> None:
+    def refresh_home_work(self, shards: list[int] | None = None) -> None:
         """Recompute clusters / home-work tables from the current state."""
-        for k in range(self.config.n_shards):
+        for k in self._shards(shards):
             db = IncrementalDBSCAN(self.config.dbscan, ClusterState.load(self.dir / "_state" / f"shard={k}"),
                                    use_cuda=self.use_cuda)
             self._refresh_home_work(db, k)
@@ -207,6 +267,7 @@ class Pipeline:
         """Delete every table and the state written by polaroam in ``output_dir``."""
         for t in _TABLES:
             shutil.rmtree(self.dir / t, ignore_errors=True)
+        shutil.rmtree(self.dir / "_commits", ignore_errors=True)
         (self.dir / "sinks.parquet").unlink(missing_ok=True)
         (self.dir / "manifest.json").unlink(missing_ok=True)
 
@@ -301,14 +362,51 @@ class Pipeline:
         return json.loads(f.read_text()) if f.exists() else None
 
     def _new_manifest(self) -> dict:
-        return {"config": self.config.to_dict(), "trajectories": self.trajectories,
-                "polars": pl.__version__, "batches": {}, "finalized": False}
+        return {"config": self.config.to_dict(), "trajectories": self.trajectories, "polars": pl.__version__}
 
-    def _write_manifest(self, m: dict) -> None:
+    def _ensure_manifest(self) -> None:
+        """Write the manifest once. It never changes afterwards, so processes sharing the
+        directory never overwrite each other's progress (that lives in ``_commits/``)."""
+        if (self.dir / "manifest.json").exists():
+            return
         self.dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.dir / "manifest.json.tmp"
-        tmp.write_text(json.dumps(m, indent=2))
-        tmp.replace(self.dir / "manifest.json")
+        tmp = self.dir / f"manifest.json.tmp-{socket.gethostname()}-{os.getpid()}"
+        tmp.write_text(json.dumps(self._new_manifest(), indent=2))
+        tmp.replace(self.dir / "manifest.json")  # same content whoever wins
+
+    def _shards(self, shards: list[int] | None) -> list[int]:
+        n = self.config.n_shards
+        if shards is None:
+            return list(range(n))
+        bad = [k for k in shards if not 0 <= k < n]
+        if bad:
+            raise ValueError(f"shards {bad} outside 0..{n - 1} (n_shards={n})")
+        return sorted(set(shards))
+
+    def _legacy(self) -> dict:
+        """Progress kept in manifest.json by output directories written before ``_commits/``."""
+        return self._read_manifest() or {}
+
+    def _committed(self, batch_id: str) -> set[int]:
+        d = self.dir / "_commits" / f"batch={batch_id}"
+        ks = {int(f.name.removeprefix("shard=")) for f in d.glob("shard=*")} if d.exists() else set()
+        return ks | set(self._legacy().get("batches", {}).get(batch_id, []))
+
+    def _commit(self, batch_id: str, k: int) -> None:
+        d = self.dir / "_commits" / f"batch={batch_id}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"shard={k}").touch()
+
+    def _batches(self) -> list[str]:
+        d = self.dir / "_commits"
+        new = [p.name.removeprefix("batch=") for p in sorted(d.glob("batch=*"))] if d.exists() else []
+        names = list(self._legacy().get("batches", {})) + [b for b in new if b != "_finalized"]
+        return list(dict.fromkeys(names))
+
+    def _finalized(self, shards: list[int]) -> bool:
+        if self._legacy().get("finalized"):
+            return True
+        return bool(self._committed("_finalized") & set(shards))
 
     def _log(self, msg: str) -> None:
         if self.verbose:
