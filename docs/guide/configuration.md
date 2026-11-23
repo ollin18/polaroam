@@ -11,8 +11,8 @@ pr.detect_stops(pings, distance_threshold=30)                  # same
 
 ```python
 cfg = pr.PipelineConfig(
-    timezone="America/Mexico_City",
-    tz_polygons=None,
+    timezone="America/Mexico_City",          # required, unless find_timezones=True
+    find_timezones=False,
     stops=pr.StopParams(distance_threshold=20, time_threshold=3600, min_stop_duration=300),
     dbscan=pr.ClusterParams(distance=20, min_points=2),
     home_work=pr.HomeWorkParams(home_min_days=7, work_min_days=4, home_hour_evening=22,
@@ -58,8 +58,8 @@ A flat polaroam file (the same keys without `countries`) works too, and it can a
 | | `max_speed_kmh` | 250 | faster steps are GPS jumps and split trajectories |
 | | `slow_speed_kmh` | 7 | threshold for `frac_slow` |
 | | `wkt_measure` | False | `LINESTRING M` with time as the measure |
-| Pipeline | `timezone` | UTC | fixed timezone, or fallback for polygons |
-| | `tz_polygons` | None | `"builtin"` (bundled world polygons) or a `tz,geometry` CSV |
+| Pipeline | `timezone` | **required** | timezone of the data; with `find_timezones`, the fallback (UTC if not given). Without either, the pipeline suggests one ([local time](local-time.md#not-sure-which-timezone)) |
+| | `find_timezones` | False | look up each stay's timezone: `True` (bundled polygons) or a `tz,geometry` CSV. Only for data spanning several timezones |
 | | `column_map` | {} | `{"uid": ..., "latitude": ..., "longitude": ..., "timestamp": ...}` |
 | | `n_shards` | 1 | device groups processed independently |
 | | `remove_sinks` | False | drop pings at coordinate sinks first: `True` finds them, or a parquet path ([sinks](spatial.md#data-quality-coordinate-sinks)) |

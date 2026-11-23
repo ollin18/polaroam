@@ -18,7 +18,7 @@ from .config import PipelineConfig
 def _config(a: argparse.Namespace) -> PipelineConfig | None:
     if a.config:
         cfg = PipelineConfig.from_json(a.config, a.label)
-    elif any(v is not None for v in (a.timezone, a.tz_polygons, a.shards, a.distance, a.time, a.min_duration,
+    elif any(v is not None for v in (a.timezone, a.find_timezones, a.tz_polygons, a.shards, a.distance, a.time, a.min_duration,
                                      a.drop_coordinates, a.remove_sinks, a.sinks_min_devices,
                                      a.dbscan_dist, a.min_points, *_traj_args(a).values())) or a.col:
         cfg = PipelineConfig()
@@ -27,8 +27,11 @@ def _config(a: argparse.Namespace) -> PipelineConfig | None:
     over = {}
     if a.timezone:
         over["timezone"] = a.timezone
-    if a.tz_polygons:
-        over["tz_polygons"] = a.tz_polygons
+    if a.find_timezones is not None and a.tz_polygons is not None:
+        raise SystemExit("use --find-timezones, not both it and --tz-polygons")
+    find = a.find_timezones if a.find_timezones is not None else a.tz_polygons
+    if find is not None:
+        over["find_timezones"] = True if find in (True, "builtin") else find
     if a.shards:
         over["n_shards"] = a.shards
     sinks = _sink_option(a)
@@ -93,8 +96,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("output", help="output directory")
         p.add_argument("--config", help="pipeline_config.json (gc-lbs format accepted)")
         p.add_argument("--label", help="country/label inside --config, e.g. CO")
-        p.add_argument("--timezone", help="fixed (or fallback) timezone, e.g. America/Bogota")
-        p.add_argument("--tz-polygons", help="per-stop timezones: 'builtin' (bundled world polygons) or a CSV with tz,geometry (WKT)")
+        p.add_argument("--timezone", help="timezone of the data, e.g. America/Bogota (required unless "
+                                          "--find-timezones; then the fallback)")
+        p.add_argument("--find-timezones", nargs="?", const=True, metavar="CSV",
+                       help="look up each stay's timezone: alone, in the bundled polygons; with CSV, in a "
+                            "tz,geometry (WKT) file. Only for data spanning several timezones")
+        p.add_argument("--tz-polygons", help=argparse.SUPPRESS)  # old name of --find-timezones
         p.add_argument("--shards", type=int, help="split devices into N groups (bounded memory)")
         p.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
         p.add_argument("--distance", type=float, help="stop distance threshold (m)")
@@ -128,8 +135,17 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--col", action="append", help="column mapping, e.g. --col uid=device_id")
     a = ap.parse_args(argv)
 
+    from .local_time import TimezoneRequired
     from .pipeline import Pipeline
 
+    try:
+        return _run(a, Pipeline)
+    except TimezoneRequired as e:
+        print(f"polaroam: {e}", file=sys.stderr)
+        return 2
+
+
+def _run(a: argparse.Namespace, Pipeline) -> int:
     if a.cmd == "sinks":
         from .quality import find_sinks
 

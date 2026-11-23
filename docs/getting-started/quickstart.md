@@ -47,7 +47,7 @@ trips.select("uid", "trajectory_id", "length_m", "duration", "speed_p85_kmh", "s
 
 ```python
 places = pr.cluster_stops(stops)                                  # DBSCAN, 20 m, min 2
-local = pr.add_local_time(places, timezone="America/Sao_Paulo")   # or tz_polygons="builtin"
+local = pr.add_local_time(places, timezone="America/Sao_Paulo")   # required: see Local time
 hw = pr.classify_home_work(local, home_min_days=7, work_min_days=4)
 homes = pr.home_work_locations(local)                             # one row per device
 ```

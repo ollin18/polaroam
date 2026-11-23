@@ -46,7 +46,7 @@ pytest -q      # with the dev extra; GPU tests are skipped without CUDA
 
 ## Timezone polygons
 
-World timezone polygons are bundled: pass `tz_polygons="builtin"` (or `--tz-polygons builtin`)
-for per-stay timezones; this needs the `tz` extra (shapely). A CSV with a `tz` column and a WKT
-`geometry` column works too. If every stay is in one timezone, a fixed `timezone=` needs no
-polygons and no shapely. See [Local time](../guide/local-time.md).
+World timezone polygons are bundled: `find_timezones=True` (or `--find-timezones`) looks up
+each stay's timezone; this needs the `tz` extra (shapely). A CSV with a `tz` column and a WKT
+`geometry` column works too. If every stay is in one timezone, `timezone=` alone needs no
+polygons and no shapely; it is also how the pipeline suggests a timezone when none is given. See [Local time](../guide/local-time.md).

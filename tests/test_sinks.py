@@ -63,12 +63,12 @@ def test_no_sinks_found_warns(pings):
 
 def test_pipeline_remove_sinks(dirty, tmp_path):
     hw = pr.HomeWorkParams(home_min_days=3, work_min_days=2)
-    auto = pr.Pipeline(tmp_path / "auto", pr.PipelineConfig(home_work=hw, remove_sinks=True, sinks_min_devices=MIN),
+    auto = pr.Pipeline(tmp_path / "auto", pr.PipelineConfig(timezone="America/Mexico_City", home_work=hw, remove_sinks=True, sinks_min_devices=MIN),
                        trajectories=True, verbose=False)
     auto.run(dirty)
     assert (tmp_path / "auto" / "sinks.parquet").exists()
     assert auto.sinks().select("latitude", "longitude").rows() == [SINK]
-    ref = pr.Pipeline(tmp_path / "ref", pr.PipelineConfig(home_work=hw), trajectories=True, verbose=False)
+    ref = pr.Pipeline(tmp_path / "ref", pr.PipelineConfig(timezone="America/Mexico_City", home_work=hw), trajectories=True, verbose=False)
     ref.run(clean(dirty))
     for name, key in [("stops", ["uid", "stop_event"]), ("trajectories_table", ["uid", "trajectory_id"]),
                       ("home_work", ["uid", "stop_event"]), ("locations", ["uid"])]:
@@ -76,7 +76,7 @@ def test_pipeline_remove_sinks(dirty, tmp_path):
     assert at_sink(auto.locations().collect(), "home_latitude", "home_longitude") == 0
     # a file passed explicitly is used as is and not copied into the output directory
     auto.sinks().write_parquet(tmp_path / "s.parquet")
-    by_file = pr.Pipeline(tmp_path / "file", pr.PipelineConfig(home_work=hw, remove_sinks=str(tmp_path / "s.parquet")),
+    by_file = pr.Pipeline(tmp_path / "file", pr.PipelineConfig(timezone="America/Mexico_City", home_work=hw, remove_sinks=str(tmp_path / "s.parquet")),
                           verbose=False)
     by_file.run(dirty)
     assert not (tmp_path / "file" / "sinks.parquet").exists()
@@ -87,7 +87,7 @@ def test_pipeline_remove_sinks(dirty, tmp_path):
 
 def test_incremental_reuses_first_batch_sinks(dirty, tmp_path):
     """The sinks are found in the first batch and reused, so later batches never recompute them."""
-    cfg = pr.PipelineConfig(remove_sinks=True, sinks_min_devices=MIN, n_shards=2)
+    cfg = pr.PipelineConfig(timezone="America/Mexico_City", remove_sinks=True, sinks_min_devices=MIN, n_shards=2)
     pipe = pr.Pipeline(tmp_path / "inc", cfg, verbose=False)
     # batch 1: each device's own data (with its mid-data snap); batch 2: the fake stays at the sink
     real = ~((pl.col("latitude") == SINK[0]) & (pl.col("longitude") == SINK[1]))
@@ -122,10 +122,12 @@ def test_cli_remove_sinks(dirty, tmp_path):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         # one-shot run: sees all the data, so no warning
-        assert main(["run", str(src), str(tmp_path / "out"), "--remove-sinks", "--sinks-min-devices", str(MIN)]) == 0
+        assert main(["run", str(src), str(tmp_path / "out"), "--remove-sinks", "--sinks-min-devices", str(MIN),
+                     "--timezone", "America/Mexico_City"]) == 0
     assert pl.read_parquet(tmp_path / "out" / "sinks.parquet").select("latitude", "longitude").rows() == [SINK]
     assert main(["sinks", str(src), str(tmp_path / "s.parquet"), "--min-devices", str(MIN)]) == 0
-    assert main(["run", str(src), str(tmp_path / "out2"), "--remove-sinks", str(tmp_path / "s.parquet")]) == 0
+    assert main(["run", str(src), str(tmp_path / "out2"), "--remove-sinks", str(tmp_path / "s.parquet"),
+                 "--timezone", "America/Mexico_City"]) == 0
     a = pr.Pipeline(tmp_path / "out").stops().collect().sort("uid", "stop_event")
     b = pr.Pipeline(tmp_path / "out2").stops().collect().sort("uid", "stop_event")
     assert a.equals(b) and at_sink(a, "stop_latitude", "stop_longitude") == 0

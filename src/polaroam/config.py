@@ -89,6 +89,15 @@ class TrajectoryParams:
 class PipelineConfig:
     """Full pipeline configuration.
 
+    timezone: IANA timezone of the data (e.g. ``"America/Mexico_City"``), used for every
+        stay; with ``find_timezones`` it is the fallback for stays outside every polygon
+        (``"UTC"`` if not given). Required unless ``find_timezones`` is set: the pipeline
+        raises :class:`polaroam.TimezoneRequired` with a suggestion from a sample of the data.
+    find_timezones: look up each stay's timezone: ``True`` uses the polygons bundled with
+        polaroam, a path a ``tz,geometry`` CSV of WKT polygons. Costs one lookup per stay
+        coordinate, so use it only for data known to span several timezones.
+    tz_polygons: deprecated alias of ``find_timezones``.
+
     remove_sinks: drop the pings at coordinate sinks (default geocodes, cell towers,
         Wi-Fi points) before anything else. ``False`` keeps every ping (gc-lbs behavior);
         ``True`` finds them in the data with :func:`polaroam.find_sinks` (in incremental runs,
@@ -99,8 +108,8 @@ class PipelineConfig:
     drop_coordinates: deprecated alias of ``remove_sinks=<path>``.
     """
 
-    timezone: str = "UTC"
-    tz_polygons: str | None = None
+    timezone: str | None = None
+    find_timezones: bool | str = False
     stops: StopParams = field(default_factory=StopParams)
     dbscan: ClusterParams = field(default_factory=ClusterParams)
     home_work: HomeWorkParams = field(default_factory=HomeWorkParams)
@@ -110,8 +119,27 @@ class PipelineConfig:
     remove_sinks: bool | str = False
     sinks_min_devices: int = 5000
     drop_coordinates: InitVar[str | None] = None
+    tz_polygons: InitVar[str | None] = None
 
-    def __post_init__(self, drop_coordinates: str | None) -> None:
+    def __post_init__(self, drop_coordinates: str | None, tz_polygons: str | None) -> None:
+        if tz_polygons is not None:
+            warnings.warn("tz_polygons is deprecated; use find_timezones=True (bundled polygons) or "
+                          "find_timezones=<csv path>.", DeprecationWarning, stacklevel=3)
+            self.find_timezones = True if tz_polygons == "builtin" else str(tz_polygons)
+        if isinstance(self.find_timezones, Path):
+            self.find_timezones = str(self.find_timezones)
+        if self.find_timezones == "builtin":
+            self.find_timezones = True
+        if not isinstance(self.find_timezones, (bool, str)):
+            raise TypeError("find_timezones must be True/False or the path of a tz,geometry CSV.")
+        if self.timezone is not None:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+            try:
+                ZoneInfo(self.timezone)
+            except (ZoneInfoNotFoundError, ValueError):
+                raise ValueError(f"Unknown timezone {self.timezone!r}: use an IANA name such as "
+                                 "'America/Mexico_City'.") from None
         if drop_coordinates is not None:
             warnings.warn("drop_coordinates is deprecated; use remove_sinks=<path>.", DeprecationWarning,
                           stacklevel=3)
@@ -141,15 +169,24 @@ class PipelineConfig:
         }
         if "timezone" in section:
             kw["timezone"] = section["timezone"]
-        for key in ("tz_polygons", "column_map", "n_shards", "remove_sinks", "sinks_min_devices"):
+        for key in ("find_timezones", "column_map", "n_shards", "remove_sinks", "sinks_min_devices"):
             if key in section:
                 kw[key] = section[key]
+        if "tz_polygons" in section and "find_timezones" not in section:  # older configs
+            kw["find_timezones"] = section["tz_polygons"] or False
         if "drop_coordinates" in section and "remove_sinks" not in section:  # older configs
             kw["remove_sinks"] = section["drop_coordinates"]
         if "shards" in section.get("stops", {}):
             kw["n_shards"] = int(section["stops"]["shards"])
         kw.update(overrides)
         return cls(**kw)
+
+    @property
+    def tz_source(self) -> str | None:
+        """Polygons for the timezone lookup: ``"builtin"``, a CSV path, or ``None`` (fixed timezone)."""
+        if self.find_timezones is True:
+            return "builtin"
+        return self.find_timezones or None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

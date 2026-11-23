@@ -6,7 +6,7 @@ processed in pieces). Results do not depend on either.
 ## Shards
 
 ```python
-cfg = pr.PipelineConfig(n_shards=24)        # --shards 24
+cfg = pr.PipelineConfig(timezone="America/Mexico_City", n_shards=24)        # --shards 24
 ```
 
 Devices are split into `n_shards` groups by a stable hash of `uid`: the last 7 bytes of the id,

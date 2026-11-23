@@ -85,7 +85,7 @@ def test_csv_path_and_country_filter(tmp_path):
 
 def test_pipeline_timezone_cache(tmp_path, pings, monkeypatch):
     """Daily runs look up each stay coordinate once; results equal a one-shot run."""
-    cfg = pr.PipelineConfig(timezone="UTC", tz_polygons="builtin", n_shards=2,
+    cfg = pr.PipelineConfig(find_timezones=True, n_shards=2,
                             home_work=pr.HomeWorkParams(home_min_days=3, work_min_days=2))
     one = pr.Pipeline(tmp_path / "one", cfg, verbose=False)
     one.run(pings)
@@ -111,3 +111,48 @@ def test_pipeline_timezone_cache(tmp_path, pings, monkeypatch):
     assert sum(looked_up) == n_coords  # each coordinate looked up exactly once
     cached = sum(pl.read_parquet(f).height for f in (tmp_path / "inc" / "_state").glob("shard=*/timezones.parquet"))
     assert cached == n_coords
+
+
+def test_timezone_required_suggests_from_sample(tmp_path, pings):
+    """No timezone and no lookup: fail before any work, suggesting the data's timezone."""
+    pipe = pr.Pipeline(tmp_path / "out", pr.PipelineConfig(), verbose=False)
+    with pytest.raises(pr.TimezoneRequired, match='timezone="America/Mexico_City"') as e:
+        pipe.run(pings)
+    msg = str(e.value)
+    assert "random sample of 100 points" in msg and "find_timezones=True" in msg
+    assert "several UTC offsets" not in msg  # one timezone: lookup not recommended
+    assert not (tmp_path / "out").exists()  # nothing was written
+    with pytest.raises(pr.TimezoneRequired):
+        pr.add_local_time(pr.detect_stops(pings.head(5000)))
+
+
+def test_suggestion_for_several_timezones():
+    cdmx = pl.DataFrame({"latitude": 19.4 + np.arange(60) * 1e-3, "longitude": [-99.13] * 60})
+    tijuana = pl.DataFrame({"latitude": 32.5 + np.arange(40) * 1e-3, "longitude": [-117.03] * 40})
+    pts = pl.concat([cdmx, tijuana])
+    s = pr.suggest_timezone(pts)
+    assert s.rows() == [("America/Mexico_City", s["utc_offset"][0], 60), ("America/Tijuana", s["utc_offset"][1], 40)]
+    msg = str(lt.timezone_required(pts))
+    assert 'timezone="America/Mexico_City"' in msg and "several UTC offsets" in msg
+
+
+def test_timezone_options():
+    with pytest.raises(ValueError, match="Unknown timezone"):
+        pr.PipelineConfig(timezone="Mexico City")
+    with pytest.warns(DeprecationWarning):
+        assert pr.PipelineConfig(tz_polygons="builtin").find_timezones is True
+    with pytest.warns(DeprecationWarning):
+        assert pr.PipelineConfig(tz_polygons="x.csv").tz_source == "x.csv"
+    assert pr.PipelineConfig(find_timezones=True).tz_source == "builtin"
+    assert pr.PipelineConfig(timezone="UTC").tz_source is None
+
+
+def test_cli_timezone_required(tmp_path, pings, capsys):
+    from polaroam.cli import main
+
+    src = tmp_path / "p.parquet"
+    pings.write_parquet(src)
+    assert main(["run", str(src), str(tmp_path / "out")]) == 2
+    assert 'timezone="America/Mexico_City"' in capsys.readouterr().err
+    assert main(["run", str(src), str(tmp_path / "out"), "--find-timezones"]) == 0
+    assert set(pr.Pipeline(tmp_path / "out").home_work().collect()["inputed_timezone"].unique()) == {"America/Mexico_City"}

@@ -11,8 +11,8 @@ devices each), from January 2020 to December 2021. Every figure on this page com
 import polaroam as pr
 
 cfg = pr.PipelineConfig(
-    timezone="UTC",                                   # fallback
-    tz_polygons="builtin",                            # devices span five timezones
+    find_timezones=True,                              # devices span five timezones
+    timezone="UTC",                                   # fallback: stays outside every polygon
     trajectories=pr.TrajectoryParams(min_pings=2, min_length_m=100),
 )
 pipe = pr.Pipeline("examples/output", cfg, trajectories=True)
@@ -109,5 +109,5 @@ See [Speed and transport mode](../guide/speed-and-mode.md) for the definitions a
 
 ```bash
 pip install -e ".[plot,tz]"
-python examples/make_figures.py data/veraset_movement_416.snappy.parquet --tz-polygons builtin
+python examples/make_figures.py data/veraset_movement_416.snappy.parquet --find-timezones
 ```

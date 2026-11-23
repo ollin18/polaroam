@@ -1,7 +1,6 @@
 """Build the README figures from the example data.
 
-    python examples/make_figures.py data/veraset_movement_416.snappy.parquet \
-        --tz-polygons builtin
+    python examples/make_figures.py data/veraset_movement_416.snappy.parquet
 
 Maps only show aggregates over many devices (density, overlaid trajectories);
 the single-device panel is drawn in a relative frame (km from an arbitrary
@@ -333,11 +332,10 @@ def fig_speed_profiles(pings, stops, tr, t, out, seed=3):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("pings")
-    ap.add_argument("--tz-polygons", default="builtin")
     ap.add_argument("--work-dir", default="examples/output")
     ap.add_argument("--out", default="docs/assets/figures")
     a = ap.parse_args()
-    cfg = pr.PipelineConfig(timezone="UTC", tz_polygons=a.tz_polygons,
+    cfg = pr.PipelineConfig(find_timezones=True, timezone="UTC",  # devices in five timezones
                             trajectories=pr.TrajectoryParams(min_pings=2, min_length_m=100))
     pipe = pr.Pipeline(a.work_dir, cfg, trajectories=True)
     if not (Path(a.work_dir) / "manifest.json").exists():

@@ -63,7 +63,7 @@ def test_find_sinks_and_pipeline_drop(tmp_path, pings):
     sinks = pr.find_sinks(p, min_devices=15)
     assert sinks.select("latitude", "longitude").rows() == [(19.4326, -99.1332)]
     sinks.write_parquet(tmp_path / "sinks.parquet")
-    cfg = pr.PipelineConfig(remove_sinks=str(tmp_path / "sinks.parquet"))
+    cfg = pr.PipelineConfig(timezone="America/Mexico_City", remove_sinks=str(tmp_path / "sinks.parquet"))
     pipe = pr.Pipeline(tmp_path / "out", cfg, verbose=False)
     pipe.run(p)
     assert pipe.stops().collect().sort("uid", "stop_event").equals(pr.detect_stops(pings).sort("uid", "stop_event"))

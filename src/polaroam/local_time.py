@@ -1,10 +1,11 @@
 """Local-time columns for clustered stops (gc-lbs ``local_time.sh``).
 
-The timezone is either fixed (``timezone="America/Mexico_City"``) or looked up
-per stop in timezone polygons: ``tz_polygons="builtin"`` uses the polygons shipped
-with polaroam (the ``tz_codes.csv`` of gc-lbs, 418 polygons, stored exactly), or pass
-a ``tz,geometry`` CSV of WKT polygons. Stops falling outside every polygon use
-``timezone`` as fallback (``inputed_timezone``).
+The timezone is either fixed (``timezone="America/Mexico_City"``, the efficient
+choice) or looked up per stop in timezone polygons: ``find_timezones=True`` uses the
+polygons shipped with polaroam (the ``tz_codes.csv`` of gc-lbs, 418 polygons, stored
+exactly), or pass the path of a ``tz,geometry`` CSV of WKT polygons. Stops falling
+outside every polygon use ``timezone`` as fallback (``inputed_timezone``). With neither,
+:class:`TimezoneRequired` is raised with a suggestion from a sample of the data.
 
 The lookup is exact and fast: stop coordinates go on a lat/lon grid; a grid cell
 lying inside a single polygon (and touching no other) gives its timezone by a plain
@@ -16,6 +17,9 @@ lookups only classify new cells.
 from __future__ import annotations
 
 import functools
+import warnings
+from datetime import datetime
+from datetime import timezone as dt_timezone
 from pathlib import Path
 
 import numpy as np
@@ -144,6 +148,63 @@ def lookup_timezones(points: pl.DataFrame, tz_polygons: str, country_code: str |
     return points.with_row_index("_r").join(tz, on="_r", how="left", maintain_order="left").drop("_r")
 
 
+class TimezoneRequired(ValueError):
+    """Raised when neither ``timezone`` nor ``find_timezones`` is given."""
+
+
+def suggest_timezone(points: pl.DataFrame | pl.LazyFrame, lat: str = "latitude", lon: str = "longitude", *,
+                     n: int = 100, seed: int | None = 0) -> pl.DataFrame:
+    """Timezones of a random sample of ``n`` points, in the bundled polygons.
+
+    Returns ``timezone, utc_offset, points`` (most common first; ``timezone`` is null for
+    points outside every polygon). A LazyFrame is sampled from its first million rows.
+    """
+    from zoneinfo import ZoneInfo
+
+    df = points.lazy().select(lat, lon).drop_nulls().head(1_000_000).collect()
+    df = df.sample(min(n, df.height), seed=seed)
+    found = lookup_timezones(df, BUILTIN, lat=lat, lon=lon)
+    counts = (found.group_by("timezone").agg(pl.len().cast(pl.Int64).alias("points"))
+              .sort(["points", "timezone"], descending=[True, False], nulls_last=True))
+    now = datetime.now(dt_timezone.utc)
+    offset = [None if z is None else ZoneInfo(z).utcoffset(now) for z in counts["timezone"]]
+    label = [None if o is None else f"UTC{'+' if o.total_seconds() >= 0 else '-'}{abs(int(o.total_seconds())) // 3600:02d}:"
+             f"{abs(int(o.total_seconds())) % 3600 // 60:02d}" for o in offset]
+    return counts.with_columns(pl.Series("utc_offset", label, dtype=pl.String)).select("timezone", "utc_offset", "points")
+
+
+def timezone_required(points: pl.DataFrame | pl.LazyFrame, lat: str = "latitude", lon: str = "longitude",
+                      n: int = 100) -> TimezoneRequired:
+    """The error for a missing timezone, with a suggestion from a sample of ``points``."""
+    lines = ["No timezone given: local times (home and work hours, weekdays) need one."]
+    try:
+        sugg = suggest_timezone(points, lat, lon, n=n)
+    except ImportError:
+        sugg = None
+    found = sugg.filter(pl.col("timezone").is_not_null()) if sugg is not None else None
+    if found is None or found.height == 0:
+        lines.append('Pass timezone="Area/City", an IANA name such as "America/Mexico_City".'
+                     + (" (Install polaroam[tz] to get a suggestion from your data.)" if sugg is None else ""))
+        lines.append("Or pass find_timezones=True to look up the timezone of every stay in the bundled polygons "
+                     "(one lookup per stay: use it only if the data spans several timezones).")
+        return TimezoneRequired("\n  ".join(lines))
+    total, top = int(sugg["points"].sum()), found["timezone"][0]
+    seen = ", ".join(f"{r['timezone']} {r['utc_offset']}: {r['points']}" for r in found.head(5).iter_rows(named=True))
+    if found.height > 5:
+        seen += f", and {found.height - 5} more"
+    if found["utc_offset"].n_unique() > 1:
+        lines.append(f"In a random sample of {total} points, this data spans several UTC offsets ({seen}).")
+        lines.append(f'Pass find_timezones=True to look up the timezone of every stay, with timezone="{top}" '
+                     "(the most common) as the fallback for stays outside every polygon.")
+        lines.append(f'Or pass timezone="{top}" alone if all the stays you analyze are in that timezone.')
+    else:
+        lines.append(f'Pass timezone="{top}": every timezone found in a random sample of {total} points has '
+                     f"its offset ({seen}).")
+        lines.append("find_timezones=True would look up the timezone of every stay instead; it costs one "
+                     "lookup per stay, so use it only if the data is known to span several timezones.")
+    return TimezoneRequired("\n  ".join(lines))
+
+
 def timezone_table(stops: pl.DataFrame, tz_polygons: str, *, known: pl.DataFrame | None = None,
                    country_code: str | None = None) -> pl.DataFrame:
     """``stop_latitude, stop_longitude, timezone`` for every coordinate in ``stops``, plus
@@ -155,24 +216,36 @@ def timezone_table(stops: pl.DataFrame, tz_polygons: str, *, known: pl.DataFrame
     return found if known is None else pl.concat([known.select(found.columns), found])
 
 
-def add_local_time(stops: pl.DataFrame | pl.LazyFrame, timezone: str = "UTC", tz_polygons: str | None = None,
-                   *, country_code: str | None = None, timezones: pl.DataFrame | None = None,
-                   use_cuda: bool = False) -> pl.DataFrame:
+def add_local_time(stops: pl.DataFrame | pl.LazyFrame, timezone: str | None = None,
+                   find_timezones: bool | str | Path = False, *, country_code: str | None = None,
+                   timezones: pl.DataFrame | None = None, use_cuda: bool = False,
+                   tz_polygons: str | None = None) -> pl.DataFrame:
     """Add local datetime, date parts, weekday (1=Sunday ... 7=Saturday) and weekend.
 
-    ``timezone`` is the fixed timezone, or the fallback when ``tz_polygons`` is given.
-    ``tz_polygons="builtin"`` uses the polygons shipped with polaroam; a path uses a
-    ``tz,geometry`` CSV of WKT polygons. ``timezones`` is an optional table of
-    ``stop_latitude, stop_longitude, timezone`` already looked up (see
-    :func:`timezone_table`); only coordinates missing from it are looked up.
+    ``timezone`` is the timezone of every stay (the efficient choice). With
+    ``find_timezones`` each stay's timezone is looked up instead: ``True`` uses the
+    polygons shipped with polaroam, a path a ``tz,geometry`` CSV of WKT polygons, and
+    ``timezone`` is the fallback for stays outside every polygon (``"UTC"`` if not given).
+    With neither, :class:`TimezoneRequired` is raised with a suggested timezone.
+    ``timezones`` is an optional table of ``stop_latitude, stop_longitude, timezone``
+    already looked up (see :func:`timezone_table`); only missing coordinates are looked up.
+    ``tz_polygons`` is a deprecated alias of ``find_timezones``.
     """
+    if tz_polygons is not None:
+        warnings.warn("tz_polygons is deprecated; use find_timezones=True (bundled polygons) or "
+                      "find_timezones=<csv path>.", DeprecationWarning, stacklevel=2)
+        find_timezones = tz_polygons
+    source = BUILTIN if find_timezones is True else (str(find_timezones) if find_timezones else None)
     df = engine.collect(stops.lazy(), use_cuda)
-    if tz_polygons:
-        tzs = timezone_table(df, tz_polygons, known=timezones, country_code=country_code)
+    if source is None and timezone is None:
+        raise timezone_required(df, "stop_latitude", "stop_longitude")
+    fallback = timezone or "UTC"
+    if source:
+        tzs = timezone_table(df, source, known=timezones, country_code=country_code)
         df = df.join(tzs, on=["stop_latitude", "stop_longitude"], how="left")
     else:
         df = df.with_columns(pl.lit(timezone).alias("timezone"))
-    df = df.with_columns(pl.coalesce("timezone", pl.lit(timezone)).alias("inputed_timezone"))
+    df = df.with_columns(pl.coalesce("timezone", pl.lit(fallback)).alias("inputed_timezone"))
 
     def local(col: str) -> pl.Expr:
         utc = pl.from_epoch(pl.col(col), time_unit="s").dt.replace_time_zone("UTC")

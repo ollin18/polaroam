@@ -6,8 +6,7 @@
 import polaroam as pr
 
 cfg = pr.PipelineConfig(
-    timezone="America/Bogota",                 # fixed timezone, or the fallback for tz_polygons
-    tz_polygons="builtin",                     # optional: per-stay timezone (bundled polygons)
+    timezone="America/Bogota",                 # required (or find_timezones=True)
     column_map={"uid": "device_id"},           # optional: your column names
     n_shards=8,                                # optional: split devices to bound memory
     trajectories=pr.TrajectoryParams(min_pings=2, min_length_m=100),

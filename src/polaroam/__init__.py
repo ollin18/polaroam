@@ -18,7 +18,14 @@ from .engine import configure_gpu, cuda_available
 from .h3 import h3_cells, h3_counts, home_work_h3
 from .home_work import classify_home_work, home_work_clusters, home_work_locations
 from .io import read_pings, shard_expr
-from .local_time import add_local_time, builtin_timezones, lookup_timezones, timezone_table
+from .local_time import (
+    TimezoneRequired,
+    add_local_time,
+    builtin_timezones,
+    lookup_timezones,
+    suggest_timezone,
+    timezone_table,
+)
 from .pipeline import Pipeline
 from .quality import coordinate_sinks, drop_sinks, find_sinks
 from .stops import StopDetector, StopState, detect_stops
@@ -37,6 +44,7 @@ __all__ = [
     "StopDetector",
     "StopParams",
     "StopState",
+    "TimezoneRequired",
     "TrajectoryParams",
     "add_local_time",
     "build_trajectories",
@@ -62,5 +70,6 @@ __all__ = [
     "read_pings",
     "shard_expr",
     "speed_features",
+    "suggest_timezone",
     "timezone_table",
 ]

@@ -36,7 +36,7 @@ from .clustering import ClusterState, IncrementalDBSCAN
 from .config import ClusterParams, HomeWorkParams, PipelineConfig, StopParams, TrajectoryParams
 from .home_work import classify_home_work, home_work_locations
 from .io import PingSource, read_pings, shard_expr
-from .local_time import add_local_time, timezone_table
+from .local_time import add_local_time, timezone_required, timezone_table
 from .quality import remove_sink_pings, sink_table
 from .stops import StopDetector, StopState
 
@@ -116,6 +116,9 @@ class Pipeline:
             return BatchSummary(batch_id, 0, 0, 0.0)
 
         lf = read_pings(pings, column_map or cfg.column_map)
+        if cfg.timezone is None and not cfg.find_timezones:
+            # fail before any work, with a timezone suggested from a sample of these pings
+            raise timezone_required(lf, "latitude", "longitude")
         # coordinate sinks (default geocodes, towers): drop those pings before anything else
         lf = remove_sink_pings(lf, self._sinks(lf, batch_id))
         split = self._split(lf, batch_id) if cfg.n_shards > 1 else None
@@ -267,12 +270,12 @@ class Pipeline:
         cfg = self.config
         clusters = db.labels()
         tz = None
-        if cfg.tz_polygons:
+        if cfg.tz_source:
             # a stay's coordinate never changes: look up only coordinates not seen in earlier batches
             f = self.dir / "_state" / f"shard={k}" / "timezones.parquet"
             known = self._tz.get(k, pl.read_parquet(f) if f.exists() else None)
-            tz = self._tz[k] = timezone_table(clusters, cfg.tz_polygons, known=known)
-        local = add_local_time(clusters, cfg.timezone, cfg.tz_polygons, timezones=tz, use_cuda=self.use_cuda)
+            tz = self._tz[k] = timezone_table(clusters, cfg.tz_source, known=known)
+        local = add_local_time(clusters, cfg.timezone, cfg.find_timezones, timezones=tz, use_cuda=self.use_cuda)
         hw = classify_home_work(local, cfg.home_work, use_cuda=self.use_cuda)
         self._write(clusters, "clusters", None, k)
         self._write(hw, "home_work", None, k)
@@ -313,7 +316,8 @@ class Pipeline:
 
 def _config_from_dict(d: dict) -> PipelineConfig:
     return PipelineConfig(
-        timezone=d["timezone"], tz_polygons=d.get("tz_polygons"),
+        timezone=d.get("timezone"),
+        find_timezones=d.get("find_timezones", True if d.get("tz_polygons") == "builtin" else d.get("tz_polygons") or False),
         stops=StopParams(**d["stops"]), dbscan=ClusterParams(**d["dbscan"]),
         home_work=HomeWorkParams(**d["home_work"]), trajectories=TrajectoryParams(**d["trajectories"]),
         column_map=d.get("column_map", {}), n_shards=d.get("n_shards", 1),
