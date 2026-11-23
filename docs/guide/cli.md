@@ -65,6 +65,7 @@ matches the routine trips (`matched/`) and writes `completed_trips.parquet`,
 | `--max-gap`, `--tolerance`, `--min-pings`, `--min-length` | all | trajectory parameters |
 | `--speed-window`, `--max-speed`, `--wkt-measure` | all | speed features and WKT |
 | `--cuda` | all | use the GPU engine when available |
+| `--hybrid` | run, update, finalize | shards on the GPU and the CPU at the same time ([CUDA](cuda.md#gpu-and-cpu-together-hybrid)) |
 | `--overwrite` | run | replace an existing output directory |
 | `--batch-id ID` | update | batch name (e.g. the date); re-running it is a no-op |
 | `--skip-home-work` | update | do not refresh home/work after this batch |

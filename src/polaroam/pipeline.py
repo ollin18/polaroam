@@ -67,14 +67,19 @@ class Pipeline:
     ...     pipe.update(f"pings/date={day}/*.parquet", batch_id=day)
     >>> pipe.finalize()                                     # doctest: +SKIP
     >>> pipe.home_work().collect()                          # doctest: +SKIP
+
+    ``hybrid=True`` (with ``n_shards > 1`` and a GPU) processes two shards at a time, one on the
+    GPU and one on the CPU, each taking the next shard as it finishes: the CPU's cores add to the
+    GPU instead of waiting for it. Results are identical. Off by default.
     """
 
     def __init__(self, output_dir: str | Path, config: PipelineConfig | None = None, *,
-                 trajectories: bool = False, use_cuda: bool = False, verbose: bool = True):
+                 trajectories: bool = False, use_cuda: bool = False, hybrid: bool = False, verbose: bool = True):
         self.dir = Path(output_dir)
         self._one_shot = False
         self._tz: dict[int, pl.DataFrame] = {}  # timezone lookups made in this batch, per shard
         self.use_cuda = use_cuda
+        self.hybrid = hybrid
         self.verbose = verbose
         manifest = self._read_manifest()
         if manifest is not None:
@@ -149,45 +154,84 @@ class Pipeline:
             split, private = self._split(lf, batch_id), False
         else:  # some shards only, no shared split: split just ours, in a directory of our own
             split, private = self._split(lf, batch_id, only=todo), True
-        n_stops = n_traj = 0
-        for k in todo:
-            part = lf if split is None else self._shard_part(split, k)
-            sdir = self.dir / "_state" / f"shard={k}"
-            det = StopDetector(cfg.stops, trajectories=self.trajectories, trajectory_params=cfg.trajectories,
-                               state=StopState.load(sdir), use_cuda=self.use_cuda)
-            out = det.update(part, flush=flush)
-            db = IncrementalDBSCAN(cfg.dbscan, ClusterState.load(sdir), use_cuda=self.use_cuda)
-            db.insert(out.stops)
-
-            self._write(out.stops, "stops", batch_id, k)
-            if self.trajectories:
-                self._write(out.trajectories, "trajectories", batch_id, k)
-            if compute_home_work or flush:
-                self._refresh_home_work(db, k)
-
-            tmp = self.dir / "_state" / f"shard={k}.tmp"
-            shutil.rmtree(tmp, ignore_errors=True)
-            det.state.save(tmp)
-            db.state.save(tmp)
-            tz = self._tz.pop(k, None)
-            if tz is not None:
-                tz.write_parquet(tmp / "timezones.parquet")
-            elif (sdir / "timezones.parquet").exists():
-                shutil.copy2(sdir / "timezones.parquet", tmp / "timezones.parquet")
-            shutil.rmtree(sdir, ignore_errors=True)
-            tmp.rename(sdir)
-
-            self._commit(batch_id, k)  # the shard's state and tables are in place
-            if flush:
-                self._commit("_finalized", k)
-            n_stops += out.stops.height
-            n_traj += out.trajectories.height if out.trajectories is not None else 0
-            self._log(f"batch {batch_id} shard {k + 1}/{cfg.n_shards}: {out.stops.height:,} stops"
-                      + (f", {out.trajectories.height:,} trajectories" if out.trajectories is not None else "")
-                      + f" ({time.time() - t0:.0f}s)")
+        counts = self._dispatch(todo, lambda k, cuda: self._one_shard(
+            k, lf if split is None else self._shard_part(split, k), batch_id, flush, compute_home_work, cuda, t0))
+        n_stops = sum(c[0] for c in counts)
+        n_traj = sum(c[1] for c in counts)
         if private or split is not None and len(self._committed(batch_id)) == cfg.n_shards:
             shutil.rmtree(split, ignore_errors=True)
         return BatchSummary(batch_id, n_stops, n_traj, time.time() - t0)
+
+    def _dispatch(self, todo: list[int], work) -> list:
+        """Run ``work(k, cuda)`` for every shard: in order on this pipeline's engine or, with
+        ``hybrid``, on two threads at once (GPU and CPU) sharing a queue of shards."""
+        if not (self.hybrid and len(todo) > 1 and engine.resolve(True)):
+            return [work(k, self.use_cuda) for k in todo]
+        import queue
+        import threading
+
+        q: queue.SimpleQueue[int] = queue.SimpleQueue()
+        for k in todo:
+            q.put(k)
+        out: list = []
+        errors: list[BaseException] = []
+
+        def worker(cuda: bool) -> None:
+            while not errors:
+                try:
+                    k = q.get_nowait()
+                except queue.Empty:
+                    return
+                try:
+                    out.append(work(k, cuda))
+                except Exception as e:  # noqa: BLE001 - stops the other worker too; re-raised below
+                    errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(c,), name=f"polaroam-{'gpu' if c else 'cpu'}")
+                   for c in (True, False)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if errors:
+            raise errors[0]
+        return out
+
+    def _one_shard(self, k: int, part: pl.LazyFrame, batch_id: str, flush: bool, compute_home_work: bool,
+                   cuda: bool, t0: float) -> tuple[int, int]:
+        cfg = self.config
+        sdir = self.dir / "_state" / f"shard={k}"
+        det = StopDetector(cfg.stops, trajectories=self.trajectories, trajectory_params=cfg.trajectories,
+                           state=StopState.load(sdir), use_cuda=cuda)
+        out = det.update(part, flush=flush)
+        db = IncrementalDBSCAN(cfg.dbscan, ClusterState.load(sdir), use_cuda=cuda)
+        db.insert(out.stops)
+
+        self._write(out.stops, "stops", batch_id, k)
+        if self.trajectories:
+            self._write(out.trajectories, "trajectories", batch_id, k)
+        if compute_home_work or flush:
+            self._refresh_home_work(db, k, cuda)
+
+        tmp = self.dir / "_state" / f"shard={k}.tmp"
+        shutil.rmtree(tmp, ignore_errors=True)
+        det.state.save(tmp)
+        db.state.save(tmp)
+        tz = self._tz.pop(k, None)
+        if tz is not None:
+            tz.write_parquet(tmp / "timezones.parquet")
+        elif (sdir / "timezones.parquet").exists():
+            shutil.copy2(sdir / "timezones.parquet", tmp / "timezones.parquet")
+        shutil.rmtree(sdir, ignore_errors=True)
+        tmp.rename(sdir)
+
+        self._commit(batch_id, k)  # the shard's state and tables are in place
+        if flush:
+            self._commit("_finalized", k)
+        self._log(f"batch {batch_id} shard {k + 1}/{cfg.n_shards}: {out.stops.height:,} stops"
+                  + (f", {out.trajectories.height:,} trajectories" if out.trajectories is not None else "")
+                  + f" ({time.time() - t0:.0f}s)", cuda)
+        return out.stops.height, (out.trajectories.height if out.trajectories is not None else 0)
 
     def split(self, pings: PingSource, batch_id: str, *, column_map: dict[str, str | list[str]] | None = None) -> Path:
         """Split a batch by device shard once, before processes that each take some shards
@@ -257,10 +301,12 @@ class Pipeline:
 
     def refresh_home_work(self, shards: list[int] | None = None) -> None:
         """Recompute clusters / home-work tables from the current state."""
-        for k in self._shards(shards):
+        def one(k: int, cuda: bool) -> None:
             db = IncrementalDBSCAN(self.config.dbscan, ClusterState.load(self.dir / "_state" / f"shard={k}"),
-                                   use_cuda=self.use_cuda)
-            self._refresh_home_work(db, k)
+                                   use_cuda=cuda)
+            self._refresh_home_work(db, k, cuda)
+
+        self._dispatch(self._shards(shards), one)
         self._tz.clear()  # outside update(): the state on disk is not rewritten
 
     def reset(self) -> None:
@@ -328,7 +374,8 @@ class Pipeline:
                   f"-> sinks.parquet ({time.time() - t:.0f}s)")
         return sinks
 
-    def _refresh_home_work(self, db: IncrementalDBSCAN, k: int) -> None:
+    def _refresh_home_work(self, db: IncrementalDBSCAN, k: int, cuda: bool | None = None) -> None:
+        cuda = self.use_cuda if cuda is None else cuda
         cfg = self.config
         clusters = db.labels()
         tz = None
@@ -337,11 +384,11 @@ class Pipeline:
             f = self.dir / "_state" / f"shard={k}" / "timezones.parquet"
             known = self._tz.get(k, pl.read_parquet(f) if f.exists() else None)
             tz = self._tz[k] = timezone_table(clusters, cfg.tz_source, known=known)
-        local = add_local_time(clusters, cfg.timezone, cfg.find_timezones, timezones=tz, use_cuda=self.use_cuda)
-        hw = classify_home_work(local, cfg.home_work, use_cuda=self.use_cuda)
+        local = add_local_time(clusters, cfg.timezone, cfg.find_timezones, timezones=tz, use_cuda=cuda)
+        hw = classify_home_work(local, cfg.home_work, use_cuda=cuda)
         self._write(clusters, "clusters", None, k)
         self._write(hw, "home_work", None, k)
-        self._write(home_work_locations(local, cfg.home_work, self.use_cuda), "locations", None, k)
+        self._write(home_work_locations(local, cfg.home_work, cuda), "locations", None, k)
 
     def _write(self, df: pl.DataFrame, table: str, batch_id: str | None, k: int) -> None:
         d = self.dir / table if batch_id is None else self.dir / table / f"batch={batch_id}"
@@ -408,9 +455,10 @@ class Pipeline:
             return True
         return bool(self._committed("_finalized") & set(shards))
 
-    def _log(self, msg: str) -> None:
+    def _log(self, msg: str, cuda: bool | None = None) -> None:
         if self.verbose:
-            print(f"[polaroam] {msg}" + (" (cuda)" if engine.resolve(self.use_cuda) else ""))
+            cuda = self.use_cuda if cuda is None else cuda
+            print(f"[polaroam] {msg}" + (" (cuda)" if engine.resolve(cuda) else ""))
 
 
 def _config_from_dict(d: dict) -> PipelineConfig:

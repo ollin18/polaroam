@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                    # 116 tests; GPU tests are skipped without CUDA
+pytest -q                    # 117 tests; GPU tests are skipped without CUDA
 ruff check src tests examples
 ```
 
@@ -31,7 +31,7 @@ ruff check src tests examples
 | Map matching | follows a known route on a street grid; HMM path identical to **brute force** over all candidate sequences; gaps and off-network points; modes and volumes; chunked output == in memory | `test_roads.py` |
 | Routines | trip states, routine mode passed to trips without one; completion follows the device's habit over a shorter street; empty trips filled with and without preference; the `routines` command | `test_routines.py` |
 | Several processes | three processes at once on one output directory, each with its own shards, with and without a shared split == one process, for all five tables; retries, old manifests | `test_pipeline_shards.py` |
-| CUDA | every stage on GPU == CPU **exactly**; incremental on GPU == one-shot on CPU | `test_cuda.py` |
+| CUDA | every stage on GPU == CPU **exactly**; incremental on GPU == one-shot on CPU; `hybrid` (GPU and CPU shards at once) == CPU, with both engines taking shards | `test_cuda.py` |
 
 ## Large-scale checks
 

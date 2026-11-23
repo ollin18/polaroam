@@ -161,6 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--min-points", type=int, help="DBSCAN min points")
         p.add_argument("--trajectories", action="store_true", help="also extract trajectories")
         p.add_argument("--cuda", action="store_true", help="use the polars GPU engine when available")
+        p.add_argument("--hybrid", action="store_true",
+                       help="two shards at a time, one on the GPU and one on the CPU (needs --shards > 1)")
         _add_sink_args(p)
         _add_traj_args(p)
         _add_only_shards(p)
@@ -174,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     f = sub.add_parser("finalize")
     f.add_argument("output")
     f.add_argument("--cuda", action="store_true")
+    f.add_argument("--hybrid", action="store_true", help="shards on the GPU and the CPU at once")
     _add_only_shards(f)
     st = sub.add_parser("status", help="committed shards per batch")
     st.add_argument("output")
@@ -246,10 +249,10 @@ def _run(a: argparse.Namespace, Pipeline) -> int:
         print(json.dumps(Pipeline(a.output, verbose=False).status(), indent=1))
         return 0
     if a.cmd == "run":
-        pipe = Pipeline(a.output, _config(a), trajectories=a.trajectories, use_cuda=a.cuda)
+        pipe = Pipeline(a.output, _config(a), trajectories=a.trajectories, use_cuda=a.cuda, hybrid=a.hybrid)
         s = pipe.run(a.input, overwrite=a.overwrite, shards=_only_shards(a.only_shards, pipe.config.n_shards))
     elif a.cmd == "update":
-        pipe = Pipeline(a.output, _config(a), trajectories=a.trajectories, use_cuda=a.cuda)
+        pipe = Pipeline(a.output, _config(a), trajectories=a.trajectories, use_cuda=a.cuda, hybrid=a.hybrid)
         if a.split_only:
             if a.batch_id is None:
                 raise SystemExit("--split-only needs --batch-id")
@@ -258,7 +261,7 @@ def _run(a: argparse.Namespace, Pipeline) -> int:
         s = pipe.update(a.input, batch_id=a.batch_id, compute_home_work=not a.skip_home_work,
                         shards=_only_shards(a.only_shards, pipe.config.n_shards))
     elif a.cmd == "finalize":
-        pipe = Pipeline(a.output, use_cuda=a.cuda)
+        pipe = Pipeline(a.output, use_cuda=a.cuda, hybrid=a.hybrid)
         s = pipe.finalize(shards=_only_shards(a.only_shards, pipe.config.n_shards))
     else:
         from .trajectories import extract_trajectories

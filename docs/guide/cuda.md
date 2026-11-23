@@ -62,3 +62,22 @@ month. Floating-point details that could differ between engines are made order-i
 | Mexico City month, one-shot (1.66B pings) | 24.4 min | 15.9 min |
 
 See [Benchmarks](../validation/benchmarks.md) for details.
+
+## GPU and CPU together (`hybrid`)
+
+Off by default. With several shards, `hybrid=True` processes two shards at a time: one on the
+GPU and one on the CPU, each taking the next shard from a shared queue as it finishes. The
+CPU's cores then work alongside the GPU instead of waiting for it, and the faster engine simply
+takes more shards. Results are identical to either engine alone (tested).
+
+```python
+pipe = pr.Pipeline("out/MX", pr.PipelineConfig(timezone="America/Mexico_City", n_shards=24),
+                   trajectories=True, use_cuda=True, hybrid=True)
+```
+
+```bash
+polaroam run "raw/MX/**/*.parquet" out/MX --timezone America/Mexico_City --shards 24 --cuda --hybrid
+```
+
+Without a GPU it falls back to the CPU, one shard at a time. The two engines share the
+machine's memory, so size the shards for two at once.
