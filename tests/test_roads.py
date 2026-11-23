@@ -217,12 +217,12 @@ def test_cli_match(tmp_path):
     tr.write_parquet(tmp_path / "trips.parquet")
     assert main(["match", str(tmp_path / "trips.parquet"), str(tmp_path / "one"), "--network",
                  str(tmp_path / "roads.parquet")]) == 0
-    assert pl.read_parquet(tmp_path / "one" / "trajectories.parquet")["n_parts"].to_list() == [1, 1]
+    assert pl.read_parquet(tmp_path / "one" / "trajectories" / "*.parquet")["n_parts"].to_list() == [1, 1]
     assert main(["match", str(tmp_path / "trips.parquet"), str(tmp_path / "modes"), "--network",
                  f"walk={tmp_path / 'roads.parquet'}", "--search-radius", "40"]) == 0
-    out = pl.read_parquet(tmp_path / "modes" / "trajectories.parquet")
+    out = pl.read_parquet(tmp_path / "modes" / "trajectories" / "*.parquet")
     assert out["mode_guess"].to_list() == ["walk"]  # no network given for bike
-    assert (tmp_path / "modes" / "edges.parquet").exists() and (tmp_path / "modes" / "points.parquet").exists()
+    assert any((tmp_path / "modes" / "edges").glob("*.parquet"))
 
 
 def test_edge_volumes_min_fraction(net):
@@ -232,3 +232,14 @@ def test_edge_volumes_min_fraction(net):
     every = pr.edge_volumes(res.edges)
     half = pr.edge_volumes(res.edges, min_fraction=0.5)
     assert every.height == 2 and half.height == 1
+
+
+def test_output_dir_matches_in_memory(net, tmp_path):
+    tr = trips([(0, 0), (300, 0)], [(0, 100), (0, 300)], [(100, 0), (100, 400)]).with_columns(
+        pl.Series("mode_guess", ["walk", "bike", "walk"]))
+    p = pr.MatchParams(chunk_points=20)  # several chunks
+    mem = pr.match_trajectories(tr, {"walk": net, "bike": net}, p)
+    disk = pr.match_trajectories(tr, {"walk": net, "bike": net}, p, output_dir=tmp_path / "m")
+    assert len(list((tmp_path / "m" / "edges").glob("*.parquet"))) > 2
+    for name, key in [("trajectories", ["uid"]), ("points", ["uid", "step"]), ("edges", ["uid", "seq"])]:
+        assert getattr(disk, name).collect().sort(key).equals(getattr(mem, name).sort(key)), name

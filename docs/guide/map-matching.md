@@ -117,9 +117,20 @@ On a 90,000-node grid, 425,000 points match in about 9 s on 32 cores. On Mexico 
 OpenStreetMap networks, 11.7M points match in 8.8 minutes (22,000 points per second). The large
 joins (points × nearby road pieces, candidate pairs) run in Polars' streaming engine, and
 trajectories are processed in chunks of `chunk_points` points, so memory stays bounded: all the
-walk trajectories of the Mexico City example (2.3M points, 535,000 edges) peak at 5.7 GB. The
-results themselves can be large (about 4 traversed edges per point), so match big datasets in
-batches and write each result.
+walk trajectories of the Mexico City example (2.3M points, 535,000 edges) peak at 5.7 GB.
+
+The results themselves can be large: about 4 traversed edges per point. Pass `output_dir` and
+each chunk is written as soon as it is matched, so nothing accumulates in memory; the result then
+holds LazyFrames over the written files:
+
+```python
+res = pr.match_trajectories(trips, nets, output_dir="matched/")
+# matched/trajectories/*.parquet, matched/points/*.parquet, matched/edges/*.parquet
+vol = pr.edge_volumes(res.edges, by="mode_guess")        # streams over the files
+```
+
+In the Mexico City example (11.7M points, three networks) this keeps the whole script at
+9.9 GB; holding the results in memory, it peaked at 32 GB.
 
 ## Parameters
 

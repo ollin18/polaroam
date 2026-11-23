@@ -418,7 +418,8 @@ def _paths(net: RoadNetwork, ch: pl.DataFrame) -> pl.DataFrame:
 
 
 def match_trajectories(trajectories: pl.DataFrame | pl.LazyFrame, network: RoadNetwork | dict[str, RoadNetwork],
-                       params: MatchParams | None = None, *, by: str = "mode_guess", **kwargs) -> MatchResult:
+                       params: MatchParams | None = None, *, by: str = "mode_guess",
+                       output_dir: str | Path | None = None, **kwargs) -> MatchResult:
     """Snap trajectories to a road network.
 
     ``trajectories`` is the output of the trajectory stage (``uid``, ``trajectory_id``,
@@ -428,43 +429,82 @@ def match_trajectories(trajectories: pl.DataFrame | pl.LazyFrame, network: RoadN
     ``{"walk": walk_net, "bike": bike_net, "motorized": drive_net}``); trajectories whose
     ``by`` value has no network are skipped. Keyword arguments override
     :class:`MatchParams` fields.
+
+    The results can be large (about 4 traversed edges per point). With ``output_dir``, each
+    chunk is written as it is matched (``trajectories/``, ``points/``, ``edges/`` parquet
+    parts) and nothing accumulates in memory; the result then holds LazyFrames scanning them.
     """
     p = params or MatchParams()
     if kwargs:
         p = MatchParams(**{**p.__dict__, **kwargs})
     df = trajectories.lazy().collect() if isinstance(trajectories, pl.LazyFrame) else trajectories
-    if isinstance(network, RoadNetwork):
-        groups = [(None, df, network)]
-    else:
-        groups = [(k, df.filter(pl.col(by) == k), net) for k, net in network.items()]
-    outs = [_match_one(sub, net, p, by) for _, sub, net in groups if sub.height]
-    if not outs:
-        empty = pl.DataFrame()
-        return MatchResult(empty, empty, empty)
-    return MatchResult(*(pl.concat([o[i] for o in outs], how="diagonal_relaxed") for i in range(3)))
+    nets = [(None, network)] if isinstance(network, RoadNetwork) else list(network.items())
+    names = ("trajectories", "points", "edges")
+    out = Path(output_dir) if output_dir is not None else None
+    if out is not None:
+        for n in names:
+            (out / n).mkdir(parents=True, exist_ok=True)
+            for old in (out / n).glob("part-*.parquet"):
+                old.unlink()
+    kept: list[list[pl.DataFrame]] = [[], [], []]
+    part = 0
+    for label, net in nets:
+        sub = df if label is None else df.filter(pl.col(by) == label)  # one mode at a time
+        if sub.height == 0:
+            continue
+        for tables in _match_chunks(sub, net, p, by):
+            for i, t in enumerate(tables):
+                if t.height == 0:
+                    continue
+                if out is not None:
+                    t.write_parquet(out / names[i] / f"part-{part:05d}.parquet")
+                else:
+                    kept[i].append(t)
+            part += 1
+        del sub
+    if out is not None:
+        scan = [pl.scan_parquet(out / n / "*.parquet") if any((out / n).glob("*.parquet")) else pl.LazyFrame()
+                for n in names]
+        return MatchResult(*scan)
+    return MatchResult(*(pl.concat(k, how="diagonal_relaxed") if k else pl.DataFrame() for k in kept))
 
 
-def _match_one(df: pl.DataFrame, net: RoadNetwork, p: MatchParams, by: str) -> tuple:
+def _match_chunks(df: pl.DataFrame, net: RoadNetwork, p: MatchParams, by: str):
+    """Match ``df`` in chunks of about ``chunk_points`` points; yield each chunk's finished
+    ``(trajectories, points, edges)`` tables."""
     keys = df.select("uid", "trajectory_id", *([by] if by in df.columns else [])).with_row_index("key")
     pts = _points(df)
     # chunks of whole trajectories with about chunk_points points
     sizes = pts.group_by("key").agg(pl.len().alias("n")).sort("key")
-    chunk_id = (sizes["n"].cum_sum() // p.chunk_points).alias("chunk")
-    sizes = sizes.with_columns(chunk_id)
-    traj_rows, point_rows, edge_rows = [], [], []
+    sizes = sizes.with_columns((sizes["n"].cum_sum() // p.chunk_points).alias("chunk"))
+    attrs = net.edges.drop("length_m")
+    cols = ["uid", "trajectory_id", *([by] if by in keys.columns else []), "n_points", "n_matched", "n_parts",
+            "matched_length_m", "mean_distance_m", "geometry"]
     for ks in sizes.partition_by("chunk"):
+        ids = keys.join(ks.select("key"), on="key", how="semi")  # key, uid, trajectory_id (+ mode)
+        tr = ids.join(ks.select("key", pl.col("n").cast(pl.UInt32).alias("n_points")), on="key", how="left")
         sub = pts.join(ks.select("key"), on="key", how="semi")
         res = _match_chunk(net, sub, p)
         if res is None:
+            tr = tr.with_columns(pl.lit(0, pl.UInt32).alias("n_matched"), pl.lit(0, pl.UInt32).alias("n_parts"),
+                                 pl.lit(0.0).alias("matched_length_m"), pl.lit(None, pl.Float64).alias("mean_distance_m"),
+                                 pl.lit(None, pl.String).alias("geometry"))
+            yield tr.select(cols), pl.DataFrame(), pl.DataFrame()
             continue
         ch, pts_m = res
         pieces = _paths(net, ch)
-        point_rows.append(ch.join(pts_m.select("key", "s", "step", "lon", "lat", "t"), on=["key", "s"])
-                          .select("key", "step", pl.col("t").alias("timestamp"), pl.col("lon").alias("longitude"),
-                                  pl.col("lat").alias("latitude"), pl.col("mlon").alias("matched_longitude"),
-                                  pl.col("mlat").alias("matched_latitude"), "edge", pl.col("offset").alias("offset_m"),
-                                  pl.col("dist").alias("distance_m"), "part"))
-        edge_rows.append(pieces.join(ch.select("key", "s", "part"), on=["key", "s"]))
+        points = (ids.join(ch.join(pts_m.select("key", "s", "step", "lon", "lat", "t"), on=["key", "s"])
+                           .select("key", "step", pl.col("t").alias("timestamp"), pl.col("lon").alias("longitude"),
+                                   pl.col("lat").alias("latitude"), pl.col("mlon").alias("matched_longitude"),
+                                   pl.col("mlat").alias("matched_latitude"), "edge",
+                                   pl.col("offset").alias("offset_m"), pl.col("dist").alias("distance_m"), "part"),
+                           on="key").drop("key"))
+        edges = (ids.join(pieces.join(ch.select("key", "s", "part"), on=["key", "s"]), on="key")
+                 .sort("key", "s", "order")
+                 .with_columns(pl.int_range(pl.len()).over("key").alias("seq"))
+                 .join(net._edge_nodes.select("edge", "length_m"), on="edge", how="left")
+                 .join(attrs, on="edge", how="left")
+                 .drop("key", "order", "last"))
         # geometry: start point of each part, then for every piece its interior vertices and its end
         verts = (pieces.lazy().join(net._vertices.lazy(), on="edge")
                  .filter((pl.col("cum") > pl.col("from_m"))
@@ -491,34 +531,13 @@ def _match_one(df: pl.DataFrame, net: RoadNetwork, p: MatchParams, by: str) -> t
         stats = ch.group_by("key").agg(pl.len().cast(pl.UInt32).alias("n_matched"),
                                        pl.col("dist").mean().alias("mean_distance_m"))
         length = pieces.group_by("key").agg((pl.col("to_m") - pl.col("from_m")).sum().alias("matched_length_m"))
-        traj_rows.append(stats.join(length, on="key", how="left").join(geo, on="key", how="left"))
-    n_points = sizes.select("key", pl.col("n").cast(pl.UInt32).alias("n_points"))
-    tr = keys.join(n_points, on="key", how="left")
-    if traj_rows:
-        tr = tr.join(pl.concat(traj_rows), on="key", how="left")
-    else:
-        tr = tr.with_columns(pl.lit(None, pl.UInt32).alias("n_matched"), pl.lit(None, pl.Float64).alias("mean_distance_m"),
-                             pl.lit(None, pl.Float64).alias("matched_length_m"), pl.lit(None, pl.UInt32).alias("n_parts"),
-                             pl.lit(None, pl.String).alias("geometry"))
-    tr = tr.with_columns(pl.col("n_matched").fill_null(0), pl.col("matched_length_m").fill_null(0.0),
-                         pl.col("n_parts").fill_null(0).cast(pl.UInt32))
-    ids = keys  # key, uid, trajectory_id (+ the mode column)
-    points = (pl.concat(point_rows) if point_rows else pl.DataFrame(schema={"key": pl.UInt32}))
-    points = ids.join(points, on="key").drop("key") if point_rows else pl.DataFrame()
-    edges = pl.DataFrame()
-    if edge_rows:
-        attrs = net.edges.drop("length_m")
-        edges = (ids.join(pl.concat(edge_rows), on="key").sort("key", "s", "order")
-                 .with_columns(pl.int_range(pl.len()).over("key").alias("seq"))
-                 .join(net._edge_nodes.select("edge", "length_m"), on="edge", how="left")
-                 .join(attrs, on="edge", how="left")
-                 .drop("key", "order", "last"))
-    cols = ["uid", "trajectory_id", *([by] if by in keys.columns else []), "n_points", "n_matched", "n_parts",
-            "matched_length_m", "mean_distance_m", "geometry"]
-    return tr.select(cols), points, edges
+        tr = (tr.join(stats, on="key", how="left").join(length, on="key", how="left").join(geo, on="key", how="left")
+              .with_columns(pl.col("n_matched").fill_null(0), pl.col("matched_length_m").fill_null(0.0),
+                            pl.col("n_parts").fill_null(0).cast(pl.UInt32)))
+        yield tr.select(cols), points, edges
 
 
-def edge_volumes(edges: pl.DataFrame, network: RoadNetwork | None = None, by: str | None = None, *,
+def edge_volumes(edges: pl.DataFrame | pl.LazyFrame, network: RoadNetwork | None = None, by: str | None = None, *,
                  min_fraction: float = 0.0) -> pl.DataFrame:
     """Trajectories per edge (each trajectory counted once per edge), optionally per ``by``
     (e.g. ``mode_guess``); with ``network``, the edge ``geometry`` (WKB) is added.
@@ -528,12 +547,14 @@ def edge_volumes(edges: pl.DataFrame, network: RoadNetwork | None = None, by: st
     do not light up the whole edge on a map).
     """
     keys = ["edge", *([by] if by else [])]
+    per = (edges.lazy().select("uid", "trajectory_id", *keys, "from_m", "to_m", "length_m")
+           .group_by("uid", "trajectory_id", *keys)
+           .agg(((pl.col("to_m") - pl.col("from_m")).sum() / pl.col("length_m").first().clip(lower_bound=1e-9))
+                .alias("_cover")))
     if min_fraction > 0:
-        cover = ((pl.col("to_m") - pl.col("from_m")).sum().over("uid", "trajectory_id", *keys)
-                 / pl.col("length_m").clip(lower_bound=1e-9))
-        edges = edges.filter(cover >= min_fraction)
-    vol = (edges.unique(["uid", "trajectory_id", *keys]).group_by(keys)
-           .agg(pl.len().cast(pl.UInt32).alias("trajectories")).sort("trajectories", descending=True))
+        per = per.filter(pl.col("_cover") >= min_fraction)
+    vol = (per.group_by(keys).agg(pl.len().cast(pl.UInt32).alias("trajectories"))
+           .sort("trajectories", descending=True).collect(engine="streaming"))
     if network is not None:
         import shapely
 

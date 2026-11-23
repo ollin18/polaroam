@@ -146,8 +146,8 @@ trips = pr.extract_trajectories(pings, stops, simplify_tolerance=0, min_pings=2,
                                 remove_sinks="mx_sinks.parquet")
 nets = {m: pr.RoadNetwork(pl.read_parquet(f"osm/{k}.parquet"), directed=True)
         for m, k in [("walk", "walk"), ("bike", "bike"), ("motorized", "drive")]}
-res = pr.match_trajectories(trips, nets)
-vol = pr.edge_volumes(res.edges, by="mode_guess", min_fraction=0.5)
+res = pr.match_trajectories(trips, nets, output_dir="matched/")   # written chunk by chunk
+vol = pr.edge_volumes(res.edges, by="mode_guess", min_fraction=0.5)  # res.edges is a LazyFrame
 ```
 
 ![Trajectories matched to the streets of Mexico City, by mode](../assets/figures/cdmx_matched.png)
@@ -171,11 +171,11 @@ corridors from the streets next to them.
 - "No matched line": short trajectories (median 6 points) with at most one ping within 80 m of
   the mode's network, so there is nothing to connect.
 
-Matching the 567,517 trajectories (11.7M points) on the three networks took 8.8 minutes on 32
-CPU cores. The script peaked at 32 GB of RAM, most of it the results kept in memory: the
-traversed-edges table alone has 46.6M rows (6 GB). Matching all the walk trajectories alone
-peaks at 5.7 GB. For larger runs, match in batches (a day, or a shard of devices) and write
-each result.
+Matching the 567,517 trajectories (11.7M points) on the three networks took 9.1 minutes on 32
+CPU cores, with a peak of 9.9 GB of RAM for the whole script (sample, three networks, matching
+and figures). The results are written chunk by chunk with `output_dir`, so they never
+accumulate in memory: the traversed-edges table alone has 46.6M rows. Kept in memory instead,
+the same run peaked at 32 GB.
 
 ## Checked against the official survey
 
@@ -217,9 +217,11 @@ What this says:
   it is likely slow motorized movement (congested traffic, buses), which speed rules cannot
   tell from a bicycle. `mode_guess` is a baseline; separating buses, cars and bicycles needs
   context such as transit routes (see [Speed and mode](../guide/speed-and-mode.md)).
-- **Walking is undercounted and in the wrong places.** Its share is far lower than the
-  survey's, and its origins do not correlate with the survey's at all. Short walks rarely end
-  in a stay of 5 minutes or more 200 m away, and have few pings.
+- **Walking cannot be validated against the survey.** Travel diaries leave out short
+  pedestrian trips, so the survey's walking trips are the deliberate ones (to school, to the
+  market) with their own places and hours. LBS trips need a stay of 5 minutes or more at each
+  end, 200 m apart, which leaves out short walks too. The two sources measure different
+  walking, so neither the share (30% vs 8%) nor the geography is expected to match.
 - **Timing is broadly right.** Night trips are as rare as in the survey and the evening peak
   matches; the LBS data lacks the sharp 7:00 morning peak and has more late-evening trips.
 - **Durations differ by definition**: a survey trip is door to door (with walking and

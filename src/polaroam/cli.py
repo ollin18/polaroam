@@ -225,13 +225,10 @@ def _match(a: argparse.Namespace) -> int:
     over = {k: v for k, v in (("search_radius", a.search_radius), ("max_candidates", a.max_candidates),
                               ("sigma", a.sigma), ("beta", a.beta), ("route_factor", a.route_factor),
                               ("max_speed_kmh", a.max_speed)) if v is not None}
-    res = match_trajectories(pl.scan_parquet(a.trajectories), network, MatchParams(**over), by=a.by)
     out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
-    for name in ("trajectories", "points", "edges"):
-        getattr(res, name).write_parquet(out / f"{name}.parquet")
-    t = res.trajectories
-    print(f"{t.height:,} trajectories matched ({int((t['n_parts'] == 1).sum()):,} in one piece) -> {out}")
+    res = match_trajectories(pl.scan_parquet(a.trajectories), network, MatchParams(**over), by=a.by, output_dir=out)
+    t = res.trajectories.select(pl.len(), (pl.col("n_parts") == 1).sum()).collect().row(0)
+    print(f"{t[0]:,} trajectories matched ({t[1]:,} in one piece) -> {out}/{{trajectories,points,edges}}/")
     return 0
 
 

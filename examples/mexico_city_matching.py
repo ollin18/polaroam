@@ -46,8 +46,8 @@ def sample_trajectories(out: str, pings: str, sinks: str | None, n_devices: int,
     return tr
 
 
-def summary(res: pr.MatchResult, tr: pl.DataFrame) -> pl.DataFrame:
-    m = res.trajectories.join(tr.select("uid", "trajectory_id", "length_m"), on=["uid", "trajectory_id"])
+def summary(trajs: pl.DataFrame, tr: pl.DataFrame) -> pl.DataFrame:
+    m = trajs.join(tr.select("uid", "trajectory_id", "length_m"), on=["uid", "trajectory_id"])
     return (m.group_by("mode_guess").agg(
         pl.len().alias("trajectories"),
         (pl.col("n_matched").sum() / pl.col("n_points").sum()).alias("points_matched"),
@@ -107,13 +107,16 @@ def draw_matched(ax, net, v, mode, color, t):
 
 
 def draw_density(ax, coords, mode, color, t, bins=900):
-    """Heat map of the observed positions (trajectory vertices), as on the trajectory maps."""
+    """Heat map of the observed positions (trajectory vertices): the same colors, bins and scale as
+    the trajectory heat maps of mexico_city_figures.fig_mode_maps."""
     h = vertex_density(coords, bins)
     x0, x1, y0, y1 = extent()
+    cmap = LinearSegmentedColormap.from_list(
+        mode, [MAP_BG, blend(color, MAP_BG, 0.55), color, blend(color, "#ffffff", 0.6), "#ffffff"])
     ax.set_facecolor(MAP_BG)
     mm = np.ma.masked_where((h < 1) | ~grid_mask(h.shape), h)
-    ax.imshow(mm, extent=(x0, x1, y0, y1), origin="lower", cmap=ramp(mode, color), interpolation="antialiased",
-              norm=LogNorm(vmin=1, vmax=max(np.percentile(h[h > 0], 99.5), 2)))
+    ax.imshow(mm, extent=(x0, x1, y0, y1), origin="lower", cmap=cmap, interpolation="antialiased",
+              norm=LogNorm(vmin=1, vmax=max(np.percentile(h[h > 0], 99), 2)))
     bare(ax, t)
 
 
@@ -174,24 +177,21 @@ def main():
     nets = {m: pr.RoadNetwork(pl.read_parquet(f"{a.osm}/{k}.parquet"), directed=True) for m, k in NETWORKS.items()}
     for m, net in nets.items():
         print(m, net)
-    if a.reuse and (work / "matched_edges.parquet").exists():
-        res = pr.MatchResult(pl.read_parquet(work / "matched_trajectories.parquet"), pl.DataFrame(),
-                             pl.read_parquet(work / "matched_edges.parquet"))
-    else:
+    matched = work / "matched"
+    if not (a.reuse and (matched / "edges").exists()):
         t0 = time.time()
-        res = pr.match_trajectories(tr, nets)
-        n_pts = int(res.trajectories["n_points"].sum())
-        print(f"matched {res.trajectories.height:,} trajectories, {n_pts:,} points in {time.time() - t0:.0f}s",
-              flush=True)
-        res.trajectories.write_parquet(work / "matched_trajectories.parquet")
-        res.edges.write_parquet(work / "matched_edges.parquet")
+        # each chunk is written as it is matched: memory stays flat however large the results
+        pr.match_trajectories(tr, nets, output_dir=matched)
+        print(f"matched in {time.time() - t0:.0f}s", flush=True)
+    trajs = pl.scan_parquet(matched / "trajectories" / "*.parquet").drop("geometry").collect()
+    edges = pl.scan_parquet(matched / "edges" / "*.parquet")
+    print(f"{trajs.height:,} trajectories, {int(trajs['n_points'].sum()):,} points")
     with pl.Config(tbl_cols=10, tbl_width_chars=160):
-        print(summary(res, tr))
+        print(summary(trajs, tr))
     vols, counts = {}, {}
     for m, net in nets.items():
-        e = res.edges.filter(pl.col("mode_guess") == m)
-        vols[m] = undirected_volumes(pr.edge_volumes(e, min_fraction=0.5), net)
-        counts[m] = res.trajectories.filter((pl.col("mode_guess") == m) & (pl.col("n_parts") > 0)).height
+        vols[m] = undirected_volumes(pr.edge_volumes(edges.filter(pl.col("mode_guess") == m), min_fraction=0.5), net)
+        counts[m] = trajs.filter((pl.col("mode_guess") == m) & (pl.col("n_parts") > 0)).height
     style(THEMES["light"])  # one image for both site themes: white page, dark map panel
     fig_matched(nets, vols, counts, THEMES["light"], f"{a.out}/cdmx_matched.png")
     fig_compare(tr, nets, vols, counts, THEMES["light"], f"{a.out}/cdmx_matched_vs_raw.png")
