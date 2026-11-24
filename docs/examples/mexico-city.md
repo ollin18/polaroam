@@ -321,9 +321,10 @@ python examples/mexico_city_matching.py /data/out/MX_2022_12 --osm /data/osm/cdm
     --timestamp-column utc_date
 python examples/mexico_city_routines.py /data/out/MX_2022_12 --osm /data/osm/cdmx \
     --sample examples/output/matching/sample_60000.parquet
-python examples/mexico_city_validation.py /data/out/MX_2022_12 \
-    --eod eod_2017_csv/tviaje_eod2017/conjunto_de_datos/tviaje.csv --districts DistritosEODHogaresZMVM2017.shp
 ```
+
+The comparison with the survey is computed outside the package, with the survey data (see
+[Validation against the travel survey](../validation/survey.md#how-it-was-computed)).
 
 The city boundary used for clipping is `examples/data/cdmx_boundary.geojson` (INEGI, simplified
 to ~5 m).

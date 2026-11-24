@@ -75,6 +75,7 @@ Everything is at **<https://ollin18.github.io/polaroam/>**:
 - [CUDA](https://ollin18.github.io/polaroam/guide/cuda/)
 - [Parity with gc-lbs](https://ollin18.github.io/polaroam/validation/parity/)
 - [Benchmarks](https://ollin18.github.io/polaroam/validation/benchmarks/)
+- [Against the travel survey](https://ollin18.github.io/polaroam/validation/survey/)
 - [API reference](https://ollin18.github.io/polaroam/reference/)
 
 Build it locally with `pip install -e ".[docs]" && mkdocs serve`.

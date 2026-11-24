@@ -193,26 +193,12 @@ How distance is measured:
 Commutes in LBS are shorter than in the survey, and more of them stay within the district (see
 [Home-work flows](#home-work-flows)).
 
-## Reproduce
+## How it was computed
 
-```bash
-python examples/mexico_city_survey_validation.py /data/out/MX_2022_12 \
-    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --agebs cdmx_agebs_09.geojson \
-    --name cdmx_survey_dec
-
-python examples/mexico_city_survey_validation.py /data/out/ITESM --label "LBS Oct 2023-Mar 2024" --no-box \
-    --days 2023-10-02:2024-03-22 \
-    --exclude 2023-11-01:2023-11-02,2023-11-20,2023-12-12,2023-12-16:2024-01-07,2024-02-05,2024-03-18 \
-    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --agebs cdmx_agebs_09.geojson \
-    --name cdmx_survey_itesm
-```
-
-The three inputs are the reference data, not in the repository: `--eod-dir` is the folder with
-INEGI's `tviaje_eod2017`, `tvivienda_eod2017` and `tsdem_eod2017` folders, `--districts` the EOD
-districts, and `--agebs` the urban AGEBs with their 2020 Census population (`geomid`,
-`population`). `--cache results.pkl` keeps the computed results, so the figures can be
-redrawn in seconds. The run takes about 20 s on one month (1.5M stay pairs) and about
-4 minutes on six months (11.6M), on 32 cores.
+The validation code is not part of polaroam: it needs the survey, the census and the district
+and AGEB boundaries, none of which the package has to know about. It lives with the survey data,
+in a separate validation project. It only reads the tables a pipeline run writes (`home_work`,
+`locations`, `trajectories`), so the same checks can be redone for any city with a travel survey.
 
 Mode shares and the hour profile by mode are on the
 [Mexico City page](../examples/mexico-city.md#checked-against-the-official-survey).
