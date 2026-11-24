@@ -57,6 +57,33 @@ to twice its share of people.
 The outlier in the six months is San Lorenzo Acopilco (district 060), a mostly forested district
 on the western edge with 26,000 people and 71 devices with a home (factor 373).
 
+### By AGEB
+
+The survey stops at districts, but the census goes down to the AGEB (*área geoestadística
+básica*, a few blocks). Against the 2020 Census population of Mexico City's 2,431 urban AGEBs:
+
+![Residents per AGEB against the census population](../assets/figures/cdmx_survey_itesm_population_ageb_light.png#only-light)
+![Residents per AGEB against the census population](../assets/figures/cdmx_survey_itesm_population_ageb_dark.png#only-dark)
+
+| | Dec 2022 | Oct 2023–Mar 2024 |
+|---|---|---|
+| Residents vs population, Spearman ρ | 0.61 | 0.64 |
+| AGEBs whose share of devices is within ×2 of their share of people | 70% | 75% |
+| Expansion factor, median (10th–90th percentile) | 37 (15–77) | 12 (5–23) |
+| AGEBs without any device | 90 | 13 |
+
+- **Coverage.** In December some AGEBs lie outside the data's coverage box. With six months,
+  only 13 AGEBs have no device, and 99.7% of the homes in the city fall in an urban AGEB.
+- **Agreement.** At this scale population varies (from a few hundred to 21,000 people), and devices
+  follow it: ρ = 0.64, and three AGEBs in four are within a factor of two.
+- **More devices than people.** 27 AGEBs (12,954 devices, 1.5% of the homes) have an expansion
+  factor below 1: places where few people live but many devices have their longest night stays.
+  The largest is the next point.
+- **A likely sink.** One AGEB in the historic centre (19.433, −99.132) holds 8,008 homes for
+  947 people. It looks like a default location (one that apps report when they have no fix)
+  that the 17 detected sinks did not cover. It is worth checking before using homes at this
+  scale.
+
 ## Home-work flows
 
 ![Home-work OD heat maps and their correlation](../assets/figures/cdmx_survey_itesm_hw_od_light.png#only-light)
@@ -175,11 +202,13 @@ python examples/mexico_city_survey_validation.py /data/out/MX_2022_12 \
 python examples/mexico_city_survey_validation.py /data/out/ITESM --label "LBS Oct 2023-Mar 2024" --no-box \
     --days 2023-10-02:2024-03-22 \
     --exclude 2023-11-01:2023-11-02,2023-11-20,2023-12-12,2023-12-16:2024-01-07,2024-02-05,2024-03-18 \
-    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --name cdmx_survey_itesm
+    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --name cdmx_survey_itesm \
+    --agebs cdmx_agebs_09.geojson
 ```
 
 `--eod-dir` is the folder with INEGI's `tviaje_eod2017`, `tvivienda_eod2017` and
-`tsdem_eod2017` folders. `--cache results.pkl` keeps the computed results, so the figures can be
+`tsdem_eod2017` folders. `--agebs` (urban AGEBs with `geomid` and the census `population`) adds
+the figure per AGEB. `--cache results.pkl` keeps the computed results, so the figures can be
 redrawn in seconds. The run takes about 20 s on one month (1.5M stay pairs) and about
 4 minutes on six months (11.6M), on 32 cores.
 

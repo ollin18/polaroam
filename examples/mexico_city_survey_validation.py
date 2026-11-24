@@ -402,40 +402,87 @@ def _title(fig, title, sub, t):
 
 
 def fig_population(R, t, path):
-    P = R["pop"]
-    g = R["gdf"].merge(P.to_pandas(), left_on="Distrito", right_on="district")
+    g = R["gdf"].merge(R["pop"].to_pandas(), left_on="Distrito", right_on="district")
+    _population(g, R["pop"], "district", "districts", "EOD 2017", "household members × expansion factor", t, path)
+
+
+def fig_population_ageb(R, t, path):
+    A = R["ageb"]
+    g = A["gdf"].merge(A["pop"].to_pandas(), on="geomid")
+    _population(g, A["pop"], "AGEB", "urban AGEBs", "Census 2020", "residents counted by INEGI", t, path,
+                f"{A['in_ageb']:.1%} of the devices with a home in Mexico City live in an urban AGEB. "
+                f"{(A['pop']['residents'] == 0).sum():,} AGEBs have no device.")
+
+
+def _population(g, P, unit, units, src, how, t, path, extra=""):
+    many = P.height > 300
     fig, ax = plt.subplots(2, 3, figsize=(13, 8.6), gridspec_kw={"height_ratios": [1.15, 1]})
     fig.subplots_adjust(left=0.06, right=0.98, top=0.86, bottom=0.07, hspace=0.3, wspace=0.25)
+    g = g.assign(population=g["population"].where(g["population"] > 0), residents=g["residents"].where(g["residents"] > 0))
     for a, col, name in zip(ax[0], ["population", "residents", "expansion"],
-                            ["population (EOD 2017)", "LBS residents (devices with a home)", "expansion factor = population / residents"]):
-        g.plot(column=col, ax=a, cmap=seq(t), norm=LogNorm(), legend=True, edgecolor=t["surface"], linewidth=0.4,
-               legend_kwds={"shrink": 0.7})
+                            [f"population ({src})", "LBS residents (devices with a home)",
+                             "expansion factor = population / residents"]):
+        v = g[col].dropna().to_numpy()
+        norm = LogNorm(*np.percentile(v, [2, 98])) if many else LogNorm()
+        g.plot(column=col, ax=a, cmap=seq(t), norm=norm, legend=True, edgecolor=t["surface"],
+               linewidth=0.05 if many else 0.4, legend_kwds={"shrink": 0.7},
+               missing_kwds={"color": t["grid"], "edgecolor": t["grid"], "linewidth": 0.05})
         a.set_title(name, loc="left", fontsize=10.5), a.set_axis_off()
     e = P["expansion"].drop_nulls().to_numpy()
-    ax[1, 0].hist(e, bins=np.logspace(np.log10(e.min()), np.log10(e.max()), 30), color=t["series"][0],
-                  edgecolor=t["surface"], linewidth=0.6)
-    ax[1, 0].set_xscale("log"), ax[1, 0].set_xlabel("expansion factor"), ax[1, 0].set_ylabel("districts")
+    ax[1, 0].hist(e, bins=np.logspace(np.log10(e.min()), np.log10(e.max()), 40 if many else 30), color=t["series"][0],
+                  edgecolor=t["surface"], linewidth=0.6 if not many else 0.3)
+    ax[1, 0].set_xscale("log"), ax[1, 0].set_xlabel("expansion factor"), ax[1, 0].set_ylabel(units)
     ax[1, 0].set_title(f"expansion factor · median {np.median(e):,.0f}", loc="left", fontsize=10.5)
-    x, y = P["residents"].to_numpy(), P["population"].to_numpy()
-    ok = x > 0
+    x, y = P["residents"].to_numpy().astype(float), P["population"].to_numpy()
+    ok = (x > 0) & (y > 0)
+    kw = {"s": 5, "alpha": 0.5, "edgecolor": "none"} if many else {"s": 16, "edgecolor": t["surface"], "linewidth": 0.4}
     a = ax[1, 1]
-    a.scatter(x[ok], y[ok], s=16, color=t["series"][0], edgecolor=t["surface"], linewidth=0.4)
+    a.scatter(x[ok], y[ok], color=t["series"][0], **kw)
     a.set_xscale("log"), a.set_yscale("log")
-    a.set_xlabel(f"{LBS} residents"), a.set_ylabel("population (EOD 2017)")
+    a.set_xlabel(f"{LBS} residents"), a.set_ylabel(f"population ({src})")
     a.set_title(f"residents vs population · Spearman ρ = {spearman(x[ok], y[ok]):.2f}", loc="left", fontsize=10.5)
     a = ax[1, 2]
-    share = x[ok] / x[ok].sum() * 100
-    a.scatter(y[ok] / y[ok].sum() * 100, share, s=16, color=t["series"][0], edgecolor=t["surface"], linewidth=0.4)
-    lim = max(share.max(), (y[ok] / y[ok].sum() * 100).max()) * 1.05
-    a.plot([0, lim], [0, lim], color=t["muted"], lw=1, ls="--")
-    a.set_xlim(0, lim), a.set_ylim(0, lim)
+    px, py = y[ok] / y[ok].sum() * 100, x[ok] / x[ok].sum() * 100
+    a.scatter(px, py, color=t["series"][0], **kw)
+    if many:
+        lo, hi = min(px.min(), py.min()) * 0.8, max(px.max(), py.max()) * 1.2
+        a.set_xscale("log"), a.set_yscale("log")
+        for f, ls in ((1, "--"), (2, ":"), (0.5, ":")):
+            a.plot([lo, hi], [lo * f, hi * f], color=t["muted"], lw=1, ls=ls)
+        title = f"share per {unit} (- - equal, ··· ×2 and ×½)"
+    else:
+        lo, hi = 0, max(px.max(), py.max()) * 1.05
+        a.plot([lo, hi], [lo, hi], color=t["muted"], lw=1, ls="--")
+        title = f"share per {unit} (dashed: equal)"
+    a.set_xlim(lo, hi), a.set_ylim(lo, hi)
     a.set_xlabel("% of the population"), a.set_ylabel(f"% of {LBS} residents")
-    a.set_title("share per district (dashed: equal)", loc="left", fontsize=10.5)
-    _title(fig, "Where devices live vs where people live, Mexico City districts",
-           f"{LBS}: devices whose home location is in the district. EOD 2017: household members × expansion factor.\n"
-           "Scaled residents (× expansion factor) equal the population by construction.", t)
+    a.set_title(title, loc="left", fontsize=10.5)
+    _title(fig, f"Where devices live vs where people live, Mexico City {units}",
+           f"{LBS}: devices whose home location is in the {unit}. {src}: {how}. "
+           f"Scaled residents (× expansion factor) equal\nthe population by construction. {extra}", t)
     fig.savefig(path, dpi=130)
     plt.close(fig)
+
+
+def ageb_population(out: str, path: str) -> dict:
+    """Devices with a home per urban AGEB, against the census population of the AGEB."""
+    import geopandas as gpd
+
+    g = gpd.read_file(path).to_crs(4326)  # geomid, population, geometry
+    loc = pl.scan_parquet(glob.glob(f"{out}/locations/**/*.parquet", recursive=True)).select(
+        "home_longitude", "home_latitude").collect()
+    tree = shapely.STRtree(g.geometry.to_numpy())
+    pts = shapely.points(loc["home_longitude"].to_numpy(), loc["home_latitude"].to_numpy())
+    ip, ig = tree.query(pts, predicate="within")
+    ids = g["geomid"].to_numpy()
+    res = pl.DataFrame({"geomid": ids[ig]}).group_by("geomid").len("residents")
+    P = (pl.DataFrame({"geomid": ids, "population": g["population"].to_numpy().astype(float)})
+         .join(res, on="geomid", how="left").with_columns(pl.col("residents").fill_null(0))
+         .with_columns(pl.when((pl.col("residents") > 0) & (pl.col("population") > 0))
+                       .then(pl.col("population") / pl.col("residents")).alias("expansion")))
+    city = gpd.read_file(Path(__file__).parent / "data/cdmx_boundary.geojson").to_crs(4326).union_all()
+    n_city = int(shapely.contains_xy(city, loc["home_longitude"].to_numpy(), loc["home_latitude"].to_numpy()).sum())
+    return {"gdf": g[["geomid", "geometry"]], "pop": P, "in_ageb": len(np.unique(ip)) / n_city}
 
 
 def _heat(ax, M, t, norm, title):
@@ -606,6 +653,7 @@ def main():
     ap.add_argument("--no-box", action="store_true", help="the LBS data cover all of Mexico City")
     ap.add_argument("--all-devices", action="store_true", help="also devices without a home location")
     ap.add_argument("--cache", help="pickle of the computed results: reused if it exists")
+    ap.add_argument("--agebs", help="urban AGEBs (GeoJSON with geomid, population): also the population figure per AGEB")
     a = ap.parse_args()
     global LBS
     LBS = a.label
@@ -615,12 +663,18 @@ def main():
         R = compute(a)
         if a.cache:
             Path(a.cache).write_bytes(pickle.dumps(R))
+    if a.agebs and "ageb" not in R:
+        R["ageb"] = ageb_population(a.output_dir, a.agebs)
+        if a.cache:
+            Path(a.cache).write_bytes(pickle.dumps(R))
     with pl.Config(tbl_rows=40, tbl_width_chars=160, float_precision=3):
         print(f"{len(R['ids'])} districts")
         print(od_stats(R))
         print(summary(R))
     for theme, t in THEMES.items():
         style(t)
+        if "ageb" in R:
+            fig_population_ageb(R, t, f"{a.out}/{a.name}_population_ageb_{theme}.png")
         for name, f in (("population", fig_population), ("hw_od", fig_hw_od), ("trip_od", fig_trip_od),
                         ("hours", fig_hours), ("commute", fig_commute)):
             f(R, t, f"{a.out}/{a.name}_{name}_{theme}.png")
