@@ -44,7 +44,8 @@ pipe = pr.Pipeline("/data/out/MX_2022_12", cfg, trajectories=True, use_cuda=True
 pipe.run("/data/Berkeley/MX/data_quadrant/filtered_localized/*/*.parquet")
 ```
 
-14.7 minutes on one RTX 3090, with a peak of 22.1 GB of RAM.
+15.4 minutes on one RTX 3090, with a peak of 22.5 GB of RAM (23.9 minutes on 32 CPU cores; see
+[Benchmarks](../validation/benchmarks.md#mexico-city-166b-pings-158m-devices-one-month)).
 
 !!! warning "This dataset's `timestamp` is local time"
     In the quadrant data, `timestamp` holds the *local* wall-clock time written as a Unix time
@@ -288,17 +289,10 @@ After both fixes, the longest walk is 34 km (it was 76,000 km), with a p99 of 6.
 
 ## Three ways, one answer
 
-The same month was also processed all at once on CPU and GPU, and day by day, before the
-trajectory speed features existed (sinks kept):
-
-| Run | Wall time | Peak RAM | Peak GPU memory |
-|---|---|---|---|
-| One-shot, CPU | 24.4 min | 24.9 GB | |
-| One-shot, GPU (RTX 3090) | **15.9 min** | 22.1 GB | 13.1 GB |
-| 32 daily batches + `finalize` (CPU) | 40.5 min | **3.4 GB** | |
-
-All three produced **identical** tables (stays, trajectories, clusters, home/work, locations),
-compared exactly, row by row.
+The same month was also run on the CPU and with `--hybrid` (GPU and CPU at once), and day by day
+(daily batches use ~3.4 GB of RAM instead of ~22 GB). All runs produced **identical** tables
+(stays, trajectories, clusters, home/work, locations), compared exactly, row by row. Times are
+on the [Benchmarks](../validation/benchmarks.md#mexico-city-166b-pings-158m-devices-one-month) page.
 
 ```python
 # day by day

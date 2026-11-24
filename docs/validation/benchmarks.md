@@ -20,18 +20,33 @@ Sedona port of gc-lbs (without trajectories) on the same machine.
 
 ## Mexico City: 1.66B pings, 1.58M devices, one month
 
+All at once (`polaroam run`, 24 shards, trajectories with speed features, coordinate sinks
+removed), on 32 cores and one RTX 3090:
+
 | Run | Wall time | Peak RAM | Peak GPU memory |
 |---|---|---|---|
-| One-shot, CPU, 24 shards | 24.4 min | 24.9 GB | |
-| One-shot, GPU, 24 shards | **15.9 min** | 22.1 GB | 13.1 GB |
-| 32 daily batches + `finalize`, CPU, 24 shards | 40.5 min | **3.4 GB** | |
+| CPU | 23.9 min | 20.8 GB | |
+| GPU (`--cuda`) | 15.4 min | 22.5 GB | 11.5 GB |
+| Hybrid (`--cuda --hybrid`) | **14.2 min** | 40.5 GB | 11.5 GB |
 
-- **Split:** 99 s, one streaming pass over 22 GB of parquet, writing 24 shard partitions.
-- **One-shot:** each shard (~69M pings) takes ~56 s on the CPU and ~35 s on the GPU.
+- **Split:** 1.7–2.9 min, one streaming pass over 22 GB of parquet, writing 24 shard partitions.
+- **Per shard** (~69M pings): ~55 s on the CPU, ~31 s on the GPU.
+- **Hybrid** runs two shards at a time, one on each engine (here 15 on the GPU, 9 on the CPU).
+  It saves only 8% over the GPU alone, for almost twice the RAM: side by side, each shard took
+  ~50 s on the GPU and ~100 s on the CPU, because the GPU path still reads the parquet and builds
+  the trajectories on the same cores. It pays off on machines with more cores per GPU.
+- **Equality:** the three runs produce identical tables (stays, clusters, trajectories,
+  home/work, locations), compared exactly, shard by shard.
+
+Day by day, before the trajectory speed features existed (sinks kept):
+
+| Run | Wall time | Peak RAM |
+|---|---|---|
+| One-shot, CPU | 24.4 min | 24.9 GB |
+| 32 daily batches + `finalize`, CPU | 40.5 min | **3.4 GB** |
+
 - **Daily batches:** 40–100 s per day. The days get slower as the DBSCAN state grows, because
-  the state is rewritten after each batch.
-- **Equality:** the three runs produce identical tables. These runs predate the trajectory
-  speed features (see [Mexico City](../examples/mexico-city.md)).
+  the state is rewritten after each batch. Both runs produced identical tables.
 
 ## History
 
