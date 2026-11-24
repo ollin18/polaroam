@@ -197,18 +197,20 @@ Commutes in LBS are shorter than in the survey, and more of them stay within the
 
 ```bash
 python examples/mexico_city_survey_validation.py /data/out/MX_2022_12 \
-    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --name cdmx_survey_dec
+    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --agebs cdmx_agebs_09.geojson \
+    --name cdmx_survey_dec
 
 python examples/mexico_city_survey_validation.py /data/out/ITESM --label "LBS Oct 2023-Mar 2024" --no-box \
     --days 2023-10-02:2024-03-22 \
     --exclude 2023-11-01:2023-11-02,2023-11-20,2023-12-12,2023-12-16:2024-01-07,2024-02-05,2024-03-18 \
-    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --name cdmx_survey_itesm \
-    --agebs cdmx_agebs_09.geojson
+    --eod-dir eod_2017 --districts DistritosEODHogaresZMVM2017.shp --agebs cdmx_agebs_09.geojson \
+    --name cdmx_survey_itesm
 ```
 
-`--eod-dir` is the folder with INEGI's `tviaje_eod2017`, `tvivienda_eod2017` and
-`tsdem_eod2017` folders. `--agebs` (urban AGEBs with `geomid` and the census `population`) adds
-the figure per AGEB. `--cache results.pkl` keeps the computed results, so the figures can be
+The three inputs are the reference data, not in the repository: `--eod-dir` is the folder with
+INEGI's `tviaje_eod2017`, `tvivienda_eod2017` and `tsdem_eod2017` folders, `--districts` the EOD
+districts, and `--agebs` the urban AGEBs with their 2020 Census population (`geomid`,
+`population`). `--cache results.pkl` keeps the computed results, so the figures can be
 redrawn in seconds. The run takes about 20 s on one month (1.5M stay pairs) and about
 4 minutes on six months (11.6M), on 32 cores.
 

@@ -653,7 +653,7 @@ def main():
     ap.add_argument("--no-box", action="store_true", help="the LBS data cover all of Mexico City")
     ap.add_argument("--all-devices", action="store_true", help="also devices without a home location")
     ap.add_argument("--cache", help="pickle of the computed results: reused if it exists")
-    ap.add_argument("--agebs", help="urban AGEBs (GeoJSON with geomid, population): also the population figure per AGEB")
+    ap.add_argument("--agebs", required=True, help="urban AGEBs: GeoJSON with geomid and the census population")
     a = ap.parse_args()
     global LBS
     LBS = a.label
@@ -663,7 +663,7 @@ def main():
         R = compute(a)
         if a.cache:
             Path(a.cache).write_bytes(pickle.dumps(R))
-    if a.agebs and "ageb" not in R:
+    if "ageb" not in R:
         R["ageb"] = ageb_population(a.output_dir, a.agebs)
         if a.cache:
             Path(a.cache).write_bytes(pickle.dumps(R))
@@ -673,8 +673,7 @@ def main():
         print(summary(R))
     for theme, t in THEMES.items():
         style(t)
-        if "ageb" in R:
-            fig_population_ageb(R, t, f"{a.out}/{a.name}_population_ageb_{theme}.png")
+        fig_population_ageb(R, t, f"{a.out}/{a.name}_population_ageb_{theme}.png")
         for name, f in (("population", fig_population), ("hw_od", fig_hw_od), ("trip_od", fig_trip_od),
                         ("hours", fig_hours), ("commute", fig_commute)):
             f(R, t, f"{a.out}/{a.name}_{name}_{theme}.png")
