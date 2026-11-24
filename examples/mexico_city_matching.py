@@ -32,10 +32,13 @@ NETWORKS = {"walk": "walk", "bike": "bike", "motorized": "drive"}
 
 
 def sample_trajectories(out: str, pings: str, sinks: str | None, n_devices: int, path: Path,
-                        column_map: dict | None = None) -> pl.DataFrame:
+                        column_map: dict | None = None, home_only: bool = False) -> pl.DataFrame:
     if path.exists():
         return pl.read_parquet(path)
     traj = pl.scan_parquet(glob.glob(f"{out}/trajectories/**/shard=*.parquet", recursive=True))
+    if home_only:  # residents: devices with a home location (seen on enough nights)
+        homes = pl.scan_parquet(glob.glob(f"{out}/locations/**/shard=*.parquet", recursive=True)).select("uid")
+        traj = traj.join(homes, on="uid", how="semi")
     uids = traj.select("uid").unique().collect().sort("uid").sample(n=n_devices, seed=1)["uid"]
     stops = pl.scan_parquet(glob.glob(f"{out}/stops/**/shard=*.parquet", recursive=True))
     t = time.time()
@@ -177,6 +180,7 @@ def main():
     ap.add_argument("--sinks")
     ap.add_argument("--timestamp-column", help="column with the UTC time, if not `timestamp` (quadrant data: utc_date)")
     ap.add_argument("--devices", type=int, default=60_000)
+    ap.add_argument("--home-only", action="store_true", help="sample only devices with a home location")
     ap.add_argument("--work", default="examples/output/matching")
     ap.add_argument("--out", default="docs/assets/figures")
     ap.add_argument("--reuse", action="store_true", help="reuse saved matches (redraw the figure only)")
@@ -184,7 +188,8 @@ def main():
     work = Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
     cm = {"timestamp": a.timestamp_column} if a.timestamp_column else None
-    tr = sample_trajectories(a.output_dir, a.pings, a.sinks, a.devices, work / f"sample_{a.devices}.parquet", cm)
+    tr = sample_trajectories(a.output_dir, a.pings, a.sinks, a.devices, work / f"sample_{a.devices}.parquet", cm,
+                             home_only=a.home_only)
     nets = {m: pr.RoadNetwork(pl.read_parquet(f"{a.osm}/{k}.parquet"), directed=True) for m, k in NETWORKS.items()}
     for m, net in nets.items():
         print(m, net)

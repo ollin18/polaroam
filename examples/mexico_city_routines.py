@@ -38,7 +38,7 @@ TZ = "America/Mexico_City"
 
 def thin(tr: pl.DataFrame, keep: float = 0.2) -> pl.DataFrame:
     """Drop the pings between the first and last ``keep`` of each trajectory's length."""
-    p = (tr.select("uid", "trajectory_id", "coordinates", "timestamps").explode("coordinates", "timestamps")
+    p = (tr.select("uid", "trajectory_id", "coordinates", "timestamps").explode("coordinates", "timestamps", empty_as_null=True)
          .with_columns(pl.col("coordinates").list.get(0).alias("x"), pl.col("coordinates").list.get(1).alias("y"))
          .with_columns(haversine("y", "x", pl.col("y").shift(1).over("uid", "trajectory_id"),
                                  pl.col("x").shift(1).over("uid", "trajectory_id")).fill_null(0.0).alias("_d"))
@@ -221,7 +221,7 @@ def main():
     print(json.dumps(stats, indent=1, default=str))
 
     nets = {m: pr.RoadNetwork(pl.read_parquet(f"{a.osm}/{k}.parquet"), directed=True) for m, k in NETWORKS.items()}
-    ids = inr.select("uid", pl.col("trajectory_ids").alias("trajectory_id")).explode("trajectory_id").drop_nulls()
+    ids = inr.select("uid", pl.col("trajectory_ids").alias("trajectory_id")).explode("trajectory_id", empty_as_null=True).drop_nulls()
     rt = tm.join(ids, on=["uid", "trajectory_id"], how="semi")
     t0 = time.time()
     res = pr.match_trajectories(rt, nets, by="mode", output_dir=work / "matched")
