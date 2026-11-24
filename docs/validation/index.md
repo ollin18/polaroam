@@ -1,6 +1,6 @@
 # Validation
 
-PolaRoam is checked three ways:
+PolaRoam is checked four ways:
 
 <div class="grid cards" markdown>
 
@@ -20,6 +20,15 @@ PolaRoam is checked three ways:
     Time and memory from 11M to 1.66B pings, on CPU and GPU, all at once and day by day.
 
     [:octicons-arrow-right-24: Benchmarks](benchmarks.md)
+
+-   :material-clipboard-text-outline:{ .lg .middle } **Against the travel survey**
+
+    ---
+
+    Mexico City against the EOD 2017: home-work and trip OD heat maps, expansion factors,
+    departure times and durations by trip type, from stays and from trajectories.
+
+    [:octicons-arrow-right-24: Travel survey](survey.md)
 
 -   :material-test-tube:{ .lg .middle } **Test suite**
 

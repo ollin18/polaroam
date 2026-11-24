@@ -148,6 +148,7 @@ nav:
       - validation/index.md
       - Parity with gc-lbs: validation/parity.md
       - Benchmarks: validation/benchmarks.md
+      - Against the travel survey: validation/survey.md
       - Test suite: validation/testing.md
   - API reference:
       - reference/index.md

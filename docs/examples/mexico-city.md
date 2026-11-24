@@ -240,6 +240,10 @@ What this says:
 The comparison is indicative: 2017 vs December 2022, reported trips vs app-location
 trajectories.
 
+Home-work and trip OD heat maps, expansion factors, departure times by trip type (HBW, HBO,
+NHB) and the commute, from stays and from trajectories, on this month and on six months
+(Oct 2023–Mar 2024): [Validation against the travel survey](../validation/survey.md).
+
 ## Routines
 
 The [routines](../guide/routines.md) of the map-matching sample (60,000 devices, every ping):
